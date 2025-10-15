@@ -22,7 +22,7 @@ class CanController(gvsoc.systree.Component):
 
         super(CanController, self).__init__(parent, name)
 
-        self.set_component('devices.can.controller')
+        self.set_component('devices.can.can')
                 
     def i_INPUT(self) -> gvsoc.systree.SlaveItf:
         return gvsoc.systree.SlaveItf(self, 'input', signature='io')
