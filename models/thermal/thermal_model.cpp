@@ -41,6 +41,9 @@ private:
         std::string path;
         vp::Block *block = NULL;
         vp::Trace temp_trace;
+        // Power sampled at each update (W), exposed as a child of the
+        // temperature trace ("temp_<name>/power")
+        vp::Trace power_trace;
         double prev_energy = 0.0;
     };
 
@@ -78,6 +81,11 @@ ThermalModel::ThermalModel(vp::ComponentConf &config)
         point->path = point_cfg.component_path;
         traces.new_trace_event_real("temp_" + point->name, &point->temp_trace);
         point->temp_trace.event_real(this->cfg.temp_init);
+        // The sampled power, as a child of the temperature trace so both
+        // show up together in the GUI trace tree
+        traces.new_trace_event_real("temp_" + point->name + "/power",
+            &point->power_trace);
+        point->power_trace.event_real(0.0);
         this->sync_points.push_back(point);
 
         rth.push_back(point_cfg.rth);
@@ -176,6 +184,7 @@ void ThermalModel::event_handler(vp::Block *__this, vp::TimeEvent *event)
 
         point->block->power.temperature_set_all(_this->temp_c[i]);
         point->temp_trace.event_real(_this->temp_c[i]);
+        point->power_trace.event_real(_this->power_w[i]);
 
         _this->trace.msg(vp::TraceLevel::DEBUG,
             "Updated sync point (name: %s, power: %f W, temp: %f C)\n",

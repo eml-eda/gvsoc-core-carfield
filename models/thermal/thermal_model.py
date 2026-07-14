@@ -20,11 +20,24 @@ and loaded with :func:`load_thermal_yaml` / :func:`apply_thermal_yaml`::
     temp_ambient: <celsius>                         # optional
     temp_init: <celsius>                            # optional
     verbose: <true/false>                           # optional
+    temp_min: <celsius>                             # optional, GUI color scale
+    temp_max: <celsius>                             # optional, both or neither
     sync_points:
       <name>:
         path: <component path from the platform top>
         rth: <thermal resistance to ambient, K/W>   # optional
         tau: <thermal time constant, seconds>       # optional
+        geometry:                                   # optional, GUI heat map
+          x: <float>                                # floorplan rectangle in
+          y: <float>                                # abstract units, y grows
+          w: <float>                                # downward; w and h must
+          h: <float>                                # be > 0
+
+The ``geometry`` rectangles and the ``temp_min``/``temp_max`` color-scale
+bounds are only used by the GUI heat-map view; the thermal model itself
+ignores them. Without ``temp_min``/``temp_max`` the heat map auto-ranges
+its color scale; sync points without ``geometry`` are laid out
+automatically.
 
 The component also declares a ``file`` target parameter, so a target
 can embed a dormant ThermalModel and let the user activate it from the
@@ -41,6 +54,7 @@ from typing import Annotated, ClassVar
 
 import yaml
 
+import gvsoc.gui
 import gvsoc.systree
 from config_tree import Config, cfg_field
 from gvrun.parameter import TargetParameter
@@ -71,6 +85,18 @@ class ThermalSyncPointConfig(Config):
     tau: float = cfg_field(default=0.010, desc=(
         "Thermal time constant, in seconds (built-in RC simulator only)"
     ))
+    geo_x: float = cfg_field(default=0.0, desc=(
+        "Floorplan rectangle X position, in abstract units (GUI heat map only)"
+    ))
+    geo_y: float = cfg_field(default=0.0, desc=(
+        "Floorplan rectangle Y position, y grows downward (GUI heat map only)"
+    ))
+    geo_width: float = cfg_field(default=0.0, desc=(
+        "Floorplan rectangle width; <= 0 means no geometry (GUI heat map only)"
+    ))
+    geo_height: float = cfg_field(default=0.0, desc=(
+        "Floorplan rectangle height (GUI heat map only)"
+    ))
 
 
 class ThermalModelConfig(Config):
@@ -97,6 +123,13 @@ class ThermalModelConfig(Config):
         "Print one 'thermal <name> power_w=<power> temp_c=<temp>' line per "
         "sync point on every update (used by testbenches)"
     ))
+    temp_min: Annotated[float, Runtime] = cfg_field(default=0.0, dump=True, desc=(
+        "Heat-map color-scale lower bound, in celsius (GUI only). With "
+        "temp_max <= temp_min (the default), the GUI auto-ranges the scale."
+    ))
+    temp_max: Annotated[float, Runtime] = cfg_field(default=0.0, dump=True, desc=(
+        "Heat-map color-scale upper bound, in celsius (GUI only, see temp_min)"
+    ))
     sync_points: Annotated[list[ThermalSyncPointConfig], Runtime] = cfg_field(
         default_factory=list, init=False, desc=(
         "Sync points with the thermal simulator"
@@ -120,7 +153,36 @@ def _resolve_path(path: str) -> str:
 
 # Optional top-level settings a thermal YAML file can carry, applied to
 # the ThermalModelConfig by apply_thermal_yaml
-_GLOBAL_KEYS = ('period', 'temp_ambient', 'temp_init', 'verbose')
+_GLOBAL_KEYS = ('period', 'temp_ambient', 'temp_init', 'verbose', 'temp_min',
+    'temp_max')
+
+
+def _parse_geometry(path: str, name: str, geometry) -> dict:
+    """Validate a sync point 'geometry' mapping and flatten it into
+    ThermalSyncPointConfig geo_* kwargs."""
+    if not isinstance(geometry, dict):
+        raise ValueError(
+            f'{path}: sync point "{name}" geometry must be a mapping')
+
+    keys = set(geometry.keys())
+    if keys != {'x', 'y', 'w', 'h'}:
+        unknown = sorted(keys - {'x', 'y', 'w', 'h'})
+        missing = sorted({'x', 'y', 'w', 'h'} - keys)
+        details = []
+        if missing:
+            details.append(f'missing keys: {missing}')
+        if unknown:
+            details.append(f'unknown keys: {unknown}')
+        raise ValueError(
+            f'{path}: sync point "{name}" geometry has {", ".join(details)}')
+
+    values = {key: float(value) for key, value in geometry.items()}
+    if values['w'] <= 0.0 or values['h'] <= 0.0:
+        raise ValueError(
+            f'{path}: sync point "{name}" geometry w and h must be > 0')
+
+    return {'geo_x': values['x'], 'geo_y': values['y'],
+            'geo_width': values['w'], 'geo_height': values['h']}
 
 
 def _parse_thermal_yaml(path: str) -> tuple[dict, list[ThermalSyncPointConfig]]:
@@ -135,12 +197,17 @@ def _parse_thermal_yaml(path: str) -> tuple[dict, list[ThermalSyncPointConfig]]:
     if unknown:
         raise ValueError(f'{path}: unknown top-level keys: {sorted(unknown)}')
 
+    if ('temp_min' in content) != ('temp_max' in content):
+        raise ValueError(f'{path}: temp_min and temp_max must be given together')
+    if 'temp_min' in content and float(content['temp_max']) <= float(content['temp_min']):
+        raise ValueError(f'{path}: temp_max must be > temp_min')
+
     sync_points = []
     for name, entry in content['sync_points'].items():
         if not isinstance(entry, dict):
             raise ValueError(f'{path}: sync point "{name}" must be a mapping')
 
-        unknown = set(entry.keys()) - {'path', 'rth', 'tau'}
+        unknown = set(entry.keys()) - {'path', 'rth', 'tau', 'geometry'}
         if unknown:
             raise ValueError(
                 f'{path}: sync point "{name}" has unknown keys: {sorted(unknown)}')
@@ -153,6 +220,8 @@ def _parse_thermal_yaml(path: str) -> tuple[dict, list[ThermalSyncPointConfig]]:
             kwargs['rth'] = float(entry['rth'])
         if 'tau' in entry:
             kwargs['tau'] = float(entry['tau'])
+        if 'geometry' in entry:
+            kwargs.update(_parse_geometry(path, name, entry['geometry']))
         sync_points.append(ThermalSyncPointConfig(**kwargs))
 
     settings = {key: content[key] for key in _GLOBAL_KEYS if key in content}
@@ -205,6 +274,10 @@ def apply_thermal_yaml(config: ThermalModelConfig, path: str):
         config.temp_init = float(settings['temp_init'])
     if 'verbose' in settings:
         config.verbose = bool(settings['verbose'])
+    if 'temp_min' in settings:
+        config.temp_min = float(settings['temp_min'])
+    if 'temp_max' in settings:
+        config.temp_max = float(settings['temp_max'])
 
     config.sync_points = sync_points
 
@@ -238,7 +311,8 @@ class ThermalModel(gvsoc.systree.Component):
     replaced by a connection to an external thermal simulator.
 
     Each sync point exposes a real-valued VCD trace ``temp_<name>`` with
-    its temperature, next to the power traces.
+    its temperature, and a child trace ``temp_<name>/power`` with the
+    power it sampled at each update (W, averaged over the period).
 
     The component is inert (and warns once) when power modeling is not
     enabled (``--power``).
@@ -293,3 +367,24 @@ class ThermalModel(gvsoc.systree.Component):
         file = self._file.get_value()
         if file:
             apply_thermal_yaml(self.get_config(), file)
+
+    def gen_gui(self, parent_signal):
+        # Declare the temperature (and sampled power) of every sync point as
+        # regular GUI signals, in the 'power' group so they show up in the
+        # timeline exactly when power modeling is enabled (--power), like any
+        # other power signal. Runs at GUI-config generation time, after
+        # configure(), so the sync points file is already applied.
+        config = self.get_config()
+        if not config.sync_points:
+            return parent_signal
+
+        thermal = gvsoc.gui.Signal(self, parent_signal, name=self.get_name(),
+            groups=['power'])
+        for point in config.sync_points:
+            temp = gvsoc.gui.Signal(self, thermal, name=f'temp_{point.name}',
+                path=f'temp_{point.name}', display=gvsoc.gui.DisplayAnalog(),
+                groups=['power'])
+            gvsoc.gui.Signal(self, temp, name='power',
+                path=f'temp_{point.name}/power',
+                display=gvsoc.gui.DisplayAnalog(), groups=['power'])
+        return parent_signal
