@@ -41,9 +41,11 @@ automatically.
 
 The component also declares a ``file`` target parameter, so a target
 can embed a dormant ThermalModel and let the user activate it from the
-command line without editing the target::
+command line without editing the target, and a ``verbose`` one forcing
+the per-update trace lines on for a single run::
 
     gvrun --target=<target> --power --parameter <path>/file=<yaml> run
+    gvrun --target=<target> --power --parameter <path>/verbose=true run
 """
 
 from __future__ import annotations
@@ -325,6 +327,11 @@ class ThermalModel(gvsoc.systree.Component):
 
         gvrun --target=<target> --power --parameter <path>/file=<yaml> run
 
+    A ``verbose`` target parameter forces the per-update trace lines on
+    for one run, without editing the file::
+
+        gvrun --target=<target> --power --parameter <path>/verbose=true run
+
     or programmatically from a test ``config.py`` (the command line still
     wins over this)::
 
@@ -356,6 +363,16 @@ class ThermalModel(gvsoc.systree.Component):
             cast=str,
         )
 
+        self._verbose = TargetParameter(
+            self, name='verbose', value=False,
+            description='Force the per-update "thermal <name> power_w=<power> '
+                        'temp_c=<temp>" lines on (one per sync point per '
+                        'period, so a short period is very verbose). Can also '
+                        'be enabled with the "verbose" key of the sync points '
+                        'file.',
+            cast=bool,
+        )
+
         self.add_sources(['thermal/thermal_model.cpp'])
 
     def configure(self):
@@ -367,6 +384,12 @@ class ThermalModel(gvsoc.systree.Component):
         file = self._file.get_value()
         if file:
             apply_thermal_yaml(self.get_config(), file)
+
+        # Applied after the file so the parameter can turn the trace lines
+        # on for one run without editing it. It only forces them on: the
+        # file (or the config) stays the way to enable them by default.
+        if self._verbose.get_value():
+            self.get_config().verbose = True
 
     def gen_gui(self, parent_signal):
         # Declare the temperature (and sampled power) of every sync point as
