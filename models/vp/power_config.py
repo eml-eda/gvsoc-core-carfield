@@ -17,13 +17,34 @@
 """
 Shared power table configuration classes and YAML loader.
 
-Models supporting power modeling through their compiled config struct declare a
-``power: list[PowerSourceConfig]`` field and initialize their power sources with
-``vp::new_power_source_from_config`` (see ``vp/power/power_table_convert.hpp``).
-The tables are filled at generation time from YAML files with
-:func:`load_power_yaml`.
+Models supporting power modeling declare one :class:`PowerSourceConfig` field
+per power source, grouped in a plain-data nested config (a Config with
+``_defer_parent_init = True``), plus a ``power_model`` string field carrying
+the path of a YAML power model file::
 
-The YAML schema mirrors the legacy JSON power models::
+    class MyModelPowerConfig(Config):
+        _defer_parent_init: ClassVar[bool] = True
+        background: PowerSourceConfig = cfg_field(default_factory=PowerSourceConfig)
+        read_32: PowerSourceConfig = cfg_field(default_factory=PowerSourceConfig)
+
+    class MyModelConfig(Config):
+        power_model: str = cfg_field(default='')
+        power: MyModelPowerConfig = cfg_field(default_factory=MyModelPowerConfig)
+
+The component consumes the file in its ``configure()`` hook with
+:func:`consume_power_model`, and the C++ model initializes its power sources
+straight from the compiled nested struct with
+``vp::new_power_source_from_config`` (see ``vp/power/power_table_convert.hpp``)::
+
+    def configure(self):
+        vp.power_config.consume_power_model(self.get_config())
+
+An untouched field keeps its empty tables and the corresponding power source
+is inert. Positional, variable-count tables (e.g. per-instruction-group
+energies) keep the ``list[PowerSourceConfig]`` form and are loaded with
+:func:`load_power_yaml_list`.
+
+The YAML schema::
 
     <source-name>:
         dynamic: { type: linear, unit: pJ|W, values: { <temp>: { <volt>: { <freq>|any: <value> } } } }
@@ -38,6 +59,7 @@ from __future__ import annotations
 
 import os
 import sys
+from dataclasses import fields
 from typing import ClassVar
 
 import yaml
@@ -151,36 +173,61 @@ def _get_source_config(path: str, source_name: str, source: dict) -> PowerSource
     return config
 
 
-def load_power_yaml(path: str, names: list[str] | None = None) -> list[PowerSourceConfig]:
-    """Load power sources from a YAML power model file.
+def apply_power_yaml(config: Config, path: str, names: list[str] | None = None):
+    """Load a YAML power model file and apply it onto a power config.
+
+    Every top-level source name of the file is assigned to the
+    :class:`PowerSourceConfig` field of ``config`` with the same name; a
+    name with no matching field is an error. Fields with no entry in the
+    file are left untouched, so their power sources stay inert.
 
     The file is resolved from PYTHONPATH, like other model property files.
 
     Parameters
     ----------
+    config: Config
+        Config whose PowerSourceConfig fields should be filled, typically
+        the nested power config of a model.
     path: str
         Path of the YAML file, relative to PYTHONPATH.
     names: list[str] | None
-        Names of the sources to extract. All sources of the file if None.
-        A requested source missing from the file is an error.
-
-    Returns
-    -------
-    list[PowerSourceConfig]
-        One config per source, suitable for a model 'power' config field.
+        Names of the sources to apply. All sources of the file if None.
+        A requested source missing from the file is an error. Use this
+        when the file also carries entries not meant for ``config``
+        (e.g. a positional source list).
     """
     content = _load_yaml(path)
 
     if names is None:
         names = list(content.keys())
 
-    sources = []
     for name in names:
         if name not in content:
             raise KeyError(f'{path}: power source "{name}" not found')
-        sources.append(_get_source_config(path, name, content[name]))
+        if not isinstance(getattr(config, name, None), PowerSourceConfig):
+            valid = [f.name for f in fields(config)
+                     if isinstance(getattr(config, f.name, None), PowerSourceConfig)]
+            raise KeyError(
+                f'{path}: power source "{name}" has no matching field in '
+                f'{type(config).__name__} (valid sources: {valid})')
+        setattr(config, name, _get_source_config(path, name, content[name]))
 
-    return sources
+
+def consume_power_model(config: Config):
+    """Apply the power model file named by ``config.power_model``, if any.
+
+    Helper for the ``configure()`` hook of components following the
+    ``power_model``/``power`` convention (see the module docstring): when
+    the ``power_model`` field carries a file path, the file is applied
+    onto the ``power`` nested config with :func:`apply_power_yaml`.
+
+    Parameters
+    ----------
+    config: Config
+        The component config, carrying ``power_model`` and ``power`` fields.
+    """
+    if getattr(config, 'power_model', ''):
+        apply_power_yaml(config.power, config.power_model)
 
 
 def load_power_yaml_list(path: str, key: str) -> list[PowerSourceConfig]:

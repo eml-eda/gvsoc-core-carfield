@@ -16,14 +16,38 @@ and is unaffected.
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, ClassVar
 
 import gvsoc.systree
 import gvrun.timing
 from config_tree import Config, cfg_field, HasSize
 from gvrun.runtime import Runtime
 from gvsoc.signature import IoV2Sync
-from vp.power_config import PowerSourceConfig
+from vp.power_config import PowerSourceConfig, consume_power_model
+
+
+class MemoryV3PowerConfig(Config):
+    """Power tables of the io_v2 memory: one per-access energy quantum per
+    access kind, plus a background source (dynamic + leakage). Filled from
+    the YAML file named by the ``power_model`` field of
+    :class:`MemoryV3Config`; untouched sources stay inert."""
+
+    _defer_parent_init: ClassVar[bool] = True
+
+    background: PowerSourceConfig = cfg_field(default_factory=PowerSourceConfig, desc=(
+        "Background power (dynamic + leakage), started at reset"))
+    read_8: PowerSourceConfig = cfg_field(default_factory=PowerSourceConfig, desc=(
+        "Per-access energy of 8-bit reads"))
+    read_16: PowerSourceConfig = cfg_field(default_factory=PowerSourceConfig, desc=(
+        "Per-access energy of 16-bit reads"))
+    read_32: PowerSourceConfig = cfg_field(default_factory=PowerSourceConfig, desc=(
+        "Per-access energy of 32-bit (and wider) reads"))
+    write_8: PowerSourceConfig = cfg_field(default_factory=PowerSourceConfig, desc=(
+        "Per-access energy of 8-bit writes"))
+    write_16: PowerSourceConfig = cfg_field(default_factory=PowerSourceConfig, desc=(
+        "Per-access energy of 16-bit writes"))
+    write_32: PowerSourceConfig = cfg_field(default_factory=PowerSourceConfig, desc=(
+        "Per-access energy of 32-bit (and wider) writes"))
 
 
 class MemoryV3Config(Config, HasSize):
@@ -65,6 +89,10 @@ class MemoryV3Config(Config, HasSize):
         True to enable the power-capture trigger (magic writes of
         ``0xabbaabba`` / ``0xdeadcaca`` at offset 0 start/stop
         capture).
+    power_model: str
+        Optional path of a YAML power model file giving the power
+        tables (see :class:`MemoryV3PowerConfig`), applied at
+        generation time.
     """
 
     size: int = cfg_field(default=0, fmt="hex", dump=True, desc=(
@@ -113,10 +141,15 @@ class MemoryV3Config(Config, HasSize):
         "Enable power-capture start/stop triggers on magic writes to offset 0"
     ))
 
-    power: list[PowerSourceConfig] = cfg_field(default_factory=list, init=False, desc=(
-        "Per-source power tables (read_8..write_32 per-access energy quanta, "
-        "background power/leakage), typically filled with "
-        "vp.power_config.load_power_yaml. Empty = no power modeling."
+    power_model: str = cfg_field(default="", desc=(
+        "Path of a YAML power model file, resolved from PYTHONPATH. Applied "
+        "onto the 'power' tables at generation time. Empty = no power numbers "
+        "(all sources inert)."
+    ))
+
+    power: MemoryV3PowerConfig = cfg_field(default_factory=MemoryV3PowerConfig,
+        init=False, desc=(
+        "Per-source power tables, filled from 'power_model'."
     ))
 
 
@@ -332,6 +365,11 @@ class Memory(gvsoc.systree.Component):
         # compile the support in when the user asked for it.
         if config.atomics:
             self.add_c_flags(['-DCONFIG_ATOMICS=1'])
+
+    def configure(self):
+        # Consumed here rather than in __init__ so the power_model path can
+        # also be set after instantiation (e.g. through a target parameter).
+        consume_power_model(self.get_config())
 
     def i_INPUT(self) -> gvsoc.systree.SlaveItf:
         """Returns the io_v2 input port.

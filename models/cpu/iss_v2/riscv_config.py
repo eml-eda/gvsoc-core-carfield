@@ -15,8 +15,29 @@
 #
 
 
+from typing import ClassVar
+
 from config_tree import Config, cfg_field
 from vp.power_config import PowerSourceConfig
+
+
+class RiscvPowerConfig(Config):
+    """Named core power sources, typically filled from the core power model
+    YAML with vp.power_config.apply_power_yaml. Untouched sources stay
+    inert."""
+
+    _defer_parent_init: ClassVar[bool] = True
+
+    stall_first: PowerSourceConfig = cfg_field(default_factory=PowerSourceConfig, desc=(
+        "Energy of the first stall cycle of an instruction"
+    ))
+    stall_next: PowerSourceConfig = cfg_field(default_factory=PowerSourceConfig, desc=(
+        "Energy of each following stall cycle"
+    ))
+    background: PowerSourceConfig = cfg_field(default_factory=PowerSourceConfig, desc=(
+        "Core background power (dynamic + leakage)"
+    ))
+
 
 class RiscvConfig(Config):
     isa: str = cfg_field(default='rv32imafdc', dump=True, desc=(
@@ -49,6 +70,7 @@ class RiscvConfig(Config):
         "Per-instruction-group dynamic energy tables; the list index matches the isa "
         "power group set with set_power_group. Empty = per-instruction power off."
     ))
-    power: list[PowerSourceConfig] = cfg_field(default_factory=list, init=False, desc=(
+    power: RiscvPowerConfig = cfg_field(default_factory=RiscvPowerConfig,
+        init=False, desc=(
         "Named core power sources (stall_first, stall_next, background)."
     ))

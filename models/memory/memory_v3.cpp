@@ -36,12 +36,13 @@
 //     sideband; none of that is reproduced here. v3 is a plain backing
 //     store. Use :class:`memory.memory_v2.Memory` when memcheck
 //     integration is needed.
-//   - Power tables are promoted into the struct: the optional ``power``
-//     list of :class:`MemoryV3Config` (``vp.power_config`` entries named
-//     ``read_8``..``write_32`` and ``background``) feeds the per-access
-//     energy quanta and the background/leakage sources; an empty list
-//     leaves every source inert. The ``power_trigger``
-//     start/stop-capture feature only looks at magic payload values.
+//   - Power tables are promoted into the struct: the nested ``power``
+//     config of :class:`MemoryV3Config` (one ``vp.power_config`` source
+//     per field, ``read_8``..``write_32`` and ``background``, filled from
+//     the ``power_model`` YAML file) feeds the per-access energy quanta
+//     and the background/leakage sources; untouched fields leave their
+//     source inert. The ``power_trigger`` start/stop-capture feature only
+//     looks at magic payload values.
 
 #include <stdio.h>
 #include <string.h>
@@ -168,22 +169,22 @@ log_is_write(*this, "req_is_write", 1, vp::SignalCommon::ResetKind::HighZ)
     this->meminfo_itf.set_sync_meth(&Memory::meminfo_sync);
     new_slave_port("meminfo", &this->meminfo_itf);
 
-    // Power sources from the config power tables; every source stays inert
-    // when its table is absent (empty 'power' list = no power modeling).
+    // Power sources from the config power tables; a source whose tables
+    // were left empty (no entry in the power model file) stays inert.
     vp::new_power_source_from_config(power, "leakage", &background_power,
-        vp::power_source_config_get(this->cfg, "background"));
+        this->cfg.power.background);
     vp::new_power_source_from_config(power, "read_8", &read_8_power,
-        vp::power_source_config_get(this->cfg, "read_8"));
+        this->cfg.power.read_8);
     vp::new_power_source_from_config(power, "read_16", &read_16_power,
-        vp::power_source_config_get(this->cfg, "read_16"));
+        this->cfg.power.read_16);
     vp::new_power_source_from_config(power, "read_32", &read_32_power,
-        vp::power_source_config_get(this->cfg, "read_32"));
+        this->cfg.power.read_32);
     vp::new_power_source_from_config(power, "write_8", &write_8_power,
-        vp::power_source_config_get(this->cfg, "write_8"));
+        this->cfg.power.write_8);
     vp::new_power_source_from_config(power, "write_16", &write_16_power,
-        vp::power_source_config_get(this->cfg, "write_16"));
+        this->cfg.power.write_16);
     vp::new_power_source_from_config(power, "write_32", &write_32_power,
-        vp::power_source_config_get(this->cfg, "write_32"));
+        this->cfg.power.write_32);
 
     this->truncate_mask = this->cfg.truncate ? this->cfg.size - 1 : -1;
 

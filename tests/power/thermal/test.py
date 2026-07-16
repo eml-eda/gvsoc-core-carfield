@@ -29,7 +29,6 @@ import vp.clock_domain
 from memory.memory_v3 import Memory, MemoryV3Config
 from thermal.thermal_model import (ThermalModel, ThermalModelConfig,
                                    load_thermal_yaml)
-from vp.power_config import load_power_yaml
 from gvrun.parameter import TargetParameter
 
 from stub_master import StubMaster
@@ -100,8 +99,8 @@ class Chip(gvsoc.systree.Component):
         mems = []
         for mem_name in ['mem0', 'mem1']:
             config = MemoryV3Config(size=0x1000, latency=1,
-                                    power_trigger=spec['power_trigger'])
-            config.power = load_power_yaml('mem_power.yaml')
+                                    power_trigger=spec['power_trigger'],
+                                    power_model='mem_power.yaml')
             mem = Memory(self, mem_name, config=config)
             clock.o_CLOCK(mem.i_CLOCK())
             mems.append(mem)

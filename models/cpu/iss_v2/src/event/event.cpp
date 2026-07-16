@@ -51,16 +51,16 @@ active_pc_trace_event(iss, "active_pc", ISS_REG_WIDTH, gv::Vcd_event_type_logica
         for (size_t i = 0; i < this->iss.cfg.power_insn_groups_count; i++)
         {
             vp::new_power_source_from_config(this->iss.power, "power_insn_" + std::to_string(i),
-                &this->insn_groups_power[i], &this->iss.cfg.power_insn_groups[i]);
+                &this->insn_groups_power[i], this->iss.cfg.power_insn_groups[i]);
         }
 
         vp::new_power_source_from_config(this->iss.power, "power_stall_first", &this->power_stall_first,
-            vp::power_source_config_get(this->iss.cfg, "stall_first"));
+            this->iss.cfg.power.stall_first);
         vp::new_power_source_from_config(this->iss.power, "power_stall_next", &this->power_stall_next,
-            vp::power_source_config_get(this->iss.cfg, "stall_next"));
+            this->iss.cfg.power.stall_next);
 
         vp::new_power_source_from_config(this->iss.power, "background", &background_power,
-            vp::power_source_config_get(this->iss.cfg, "background"));
+            this->iss.cfg.power.background);
     }
     else
     {
