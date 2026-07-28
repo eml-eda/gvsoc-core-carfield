@@ -12,6 +12,11 @@ class ClockDividerConfig(Config):
     divider: int = cfg_field(default=1, dump=True, desc=(
         "Clock divider initial value"
     ))
+    enabled: bool = cfg_field(default=True, dump=True, desc=(
+        "True if the divider forwards the clock at startup. When disabled no "
+        "edge is propagated at all, which models a gated clock source such as "
+        "a powered-down oscillator."
+    ))
 
 class ClockDivider(Component):
 
@@ -28,3 +33,6 @@ class ClockDivider(Component):
 
     def i_CLOCK_CTRL(self) -> SlaveItf:
         return SlaveItf(self, itf_name='clock_ctrl', signature='wire<int>')
+
+    def i_ENABLE(self) -> SlaveItf:
+        return SlaveItf(self, itf_name='enable', signature='wire<bool>')
