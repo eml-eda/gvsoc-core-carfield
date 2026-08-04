@@ -213,6 +213,17 @@ class Xf8(IsaSubset):
             isa.disable_from_isa_tag('f8f16alt')
 
 
+class Xf8Snitch(IsaSubset):
+    # Snitch encodes the FP8 scalar load and store with funct3=100 (FLB/FSB in
+    # its riscv_instr package), while Xf8 uses the PULP encoding (funct3=000)
+
+    def __init__(self):
+        super().__init__(name='f8snitch', instrs=[
+            Insn('------- ----- ----- 100 ----- 0000111', 'flb',       FL('b'),            tags=["load", 'fp_op']),
+            Insn('------- ----- ----- 100 ----- 0100111', 'fsb',       FS('b'),            tags=['fp_op']),
+        ])
+
+
 #
 # Vectorial Floats
 #

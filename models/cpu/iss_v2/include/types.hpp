@@ -370,6 +370,9 @@ typedef struct iss_decoder_insn_s
     // 2: non-computational op (min/max/sgnj/compare/class) — 1 stage
     // 3: conversion — 2 stages
     int fpu_lat_class = 0;
+    // Integer computational instruction, executed by the vector unit's
+    // integer units, which can be fewer than the FPU lanes
+    int is_ipu = 0;
 #endif
 } iss_decoder_insn_t;
 

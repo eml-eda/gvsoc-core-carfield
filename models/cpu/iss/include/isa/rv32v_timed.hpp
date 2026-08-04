@@ -1946,30 +1946,6 @@ static inline iss_reg_t vle64_v_exec(Iss *iss, iss_insn_t *insn, iss_reg_t pc)
     return iss_insn_next(iss, insn, pc);
 }
 
-static inline iss_reg_t vle8ff_v_exec(Iss *iss, iss_insn_t *insn, iss_reg_t pc)
-{
-    // The instruction handler is empty as the VLSU block is taking care of the memory access
-    return iss_insn_next(iss, insn, pc);
-}
-
-static inline iss_reg_t vle16ff_v_exec(Iss *iss, iss_insn_t *insn, iss_reg_t pc)
-{
-    // The instruction handler is empty as the VLSU block is taking care of the memory access
-    return iss_insn_next(iss, insn, pc);
-}
-
-static inline iss_reg_t vle32ff_v_exec(Iss *iss, iss_insn_t *insn, iss_reg_t pc)
-{
-    // The instruction handler is empty as the VLSU block is taking care of the memory access
-    return iss_insn_next(iss, insn, pc);
-}
-
-static inline iss_reg_t vle64ff_v_exec(Iss *iss, iss_insn_t *insn, iss_reg_t pc)
-{
-    // The instruction handler is empty as the VLSU block is taking care of the memory access
-    return iss_insn_next(iss, insn, pc);
-}
-
 static inline iss_reg_t vse8_v_exec(Iss *iss, iss_insn_t *insn, iss_reg_t pc)
 {
     // The instruction handler is empty as the VLSU block is taking care of the memory access

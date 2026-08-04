@@ -569,11 +569,6 @@ class Rv32v(IsaSubset):
             Instr('vle32.v'          ,   Format_OPVI  ,    '000 0 00 - 00000 ----- 110 ----- 0000111', tags=['vload']),
             Instr('vle64.v'          ,   Format_OPVI  ,    '000 0 00 - 00000 ----- 111 ----- 0000111', tags=['vload']),
 
-            Instr('vle8ff.v'           ,   Format_OPVI  ,    '000 0 00 - 00000 ----- 100 ----- 0000111', tags=['vload']),# vd, (rs1), vm
-            # Instr('vle16ff.v'          ,   Format_OPVI  ,    '000 0 00 - 00000 ----- 001 ----- 0000111', tags=['vload']),
-            # Instr('vle32ff.v'          ,   Format_OPVI  ,    '000 0 00 - 00000 ----- 110 ----- 0000111', tags=['vload']),
-            # Instr('vle64ff.v'          ,   Format_OPVI  ,    '000 0 00 - 00000 ----- 111 ----- 0000111', tags=['vload']),
-
             Instr('vse8.v'           ,   Format_OPVS  ,    '000 0 00 - 00000 ----- 000 ----- 0100111', tags=['vstore']),
             Instr('vse16.v'          ,   Format_OPVS  ,    '000 0 00 - 00000 ----- 101 ----- 0100111', tags=['vstore']),
             Instr('vse32.v'          ,   Format_OPVS  ,    '000 0 00 - 00000 ----- 110 ----- 0100111', tags=['vstore']),

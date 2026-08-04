@@ -129,6 +129,16 @@ private:
     int total_size;
     int vstart;
     int vend;
+    // Which unit class (0: FPU, 1: IPU) executed the previous instruction,
+    // used to model the datapath switch drain. -1 until the first one.
+    int last_unit_class;
+    // Cycle until which each unit class drains the pipeline of its last
+    // instruction. A datapath switch must wait for the departing unit to
+    // drain before the incoming instruction can start.
+    int64_t unit_busy_until[2];
+    // Instruction already charged with the switch drain, so that it is
+    // applied only once
+    PendingInsn *switch_charged;
 };
 
 class VuLsuPendingInsn
@@ -243,12 +253,27 @@ private:
     int nb_ports;
     iss_reg_t stride;
     bool strided;
+    // Whether a unit-stride access is issued one element per request because
+    // its base address is not aligned on the lane width
+    bool single_element;
+    // Single-element mode request sequencing. Like on RTL, each port owns
+    // full lane-width words of the vector so that two elements sharing a
+    // word are issued on the same port on consecutive cycles, instead of
+    // conflicting on the same memory bank in the same cycle.
+    iss_addr_t se_base_addr;
+    uint8_t *se_base_velem;
+    int se_base_vstart;
+    int se_nb_elems;
+    std::vector<int> se_port_count;
     int elem_size;
     int reg_indexed;
     int pending_elem;
     int inst_elem_size;
     int64_t op_timestamp;
     bool prev_is_write;
+    // Whether the previous VLSU instruction was an indexed access, used to
+    // model the index-fetch startup of back-to-back indexed streams
+    bool prev_is_indexed;
     bool started;
     int vstart;
 
@@ -409,12 +434,27 @@ private:
     int nb_ports;
     iss_reg_t stride;
     bool strided;
+    // Whether a unit-stride access is issued one element per request because
+    // its base address is not aligned on the lane width
+    bool single_element;
+    // Single-element mode request sequencing. Like on RTL, each port owns
+    // full lane-width words of the vector so that two elements sharing a
+    // word are issued on the same port on consecutive cycles, instead of
+    // conflicting on the same memory bank in the same cycle.
+    iss_addr_t se_base_addr;
+    uint8_t *se_base_velem;
+    int se_base_vstart;
+    int se_nb_elems;
+    std::vector<int> se_port_count;
     int elem_size;
     int reg_indexed;
     int pending_elem;
     int inst_elem_size;
     int64_t op_timestamp;
     bool prev_is_write;
+    // Whether the previous VLSU instruction was an indexed access, used to
+    // model the index-fetch startup of back-to-back indexed streams
+    bool prev_is_indexed;
     bool started;
     int vstart;
 
@@ -634,6 +674,9 @@ public:
     Iss &iss;
     // Number of <lane_width> bits lanes in vu.
     int nb_lanes;
+    // Number of <lane_width> bits integer units in vu. Integer computational
+    // instructions are processed at this rate instead of the lane one.
+    int nb_ipus;
     // Width in bits of one lane
     int lane_width;
 

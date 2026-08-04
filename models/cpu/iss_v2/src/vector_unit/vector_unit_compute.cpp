@@ -38,6 +38,10 @@ void VuCompute::reset(bool active)
         uint8_t zero = 0;
         this->draining.clear();
         this->event_active.event(&zero);
+        this->last_unit_class = -1;
+        this->unit_busy_until[0] = 0;
+        this->unit_busy_until[1] = 0;
+        this->switch_charged = nullptr;
     }
 }
 
@@ -98,13 +102,39 @@ void VuCompute::fsm_handler(vp::Block *__this, vp::ClockEvent *event)
         _this->trace.msg(vp::Trace::LEVEL_TRACE, "Check ready (pc: 0x%lx, id: %d, ready: %d)\n",
             insn->addr, pending_insn->id, ready);
 
+        // The integer and float datapaths share the operand fetch and the
+        // result write-back path, muxed by the RTL VFU running state, so a
+        // datapath switch first waits for the departing unit to drain its
+        // pipeline, then pays one cycle for the state transition. When the
+        // switching instruction arrives after the drain completed, only the
+        // transition cycle remains. Calibrated on RTL with the alternated
+        // vadd/vfmul bench.
+        int unit_class = insn->desc->is_ipu != 0;
+        if (ready && pending_insn->nb_bytes_done == 0 &&
+            _this->last_unit_class != -1 && unit_class != _this->last_unit_class &&
+            _this->switch_charged != pending_insn)
+        {
+            _this->switch_charged = pending_insn;
+            int64_t now = _this->vu.iss.clock.get_cycles();
+            int64_t drain = _this->unit_busy_until[_this->last_unit_class] - now;
+            if (drain < 0)
+            {
+                drain = 0;
+            }
+            pending_insn->timestamp = now + drain + 1;
+            ready = false;
+        }
         if (ready)
         {
+            _this->last_unit_class = unit_class;
             // Widening/narrowing instructions process elements at half the
             // nominal rate (elem_rate_shift = 1): the RTL VFU consumes the
             // operand word over two cycles for widening and halves
             // nr_elem_word for narrowing.
-            int nb_elem_per_cycle = (_this->vu.nb_lanes * _this->vu.lane_width /
+            // Integer computational instructions go to the integer units,
+            // which can be fewer than the FPU lanes
+            int nb_units = insn->desc->is_ipu ? _this->vu.nb_ipus : _this->vu.nb_lanes;
+            int nb_elem_per_cycle = (nb_units * _this->vu.lane_width /
                 _this->vu.iss.vector.sewb) >> insn->desc->elem_rate_shift;
 
             if (pending_insn->nb_bytes_done == 0)
@@ -164,6 +194,10 @@ void VuCompute::fsm_handler(vp::Block *__this, vp::ClockEvent *event)
                 pending_insn->commit_done_cycle = _this->vu.iss.clock.get_cycles();
                 pending_insn->timestamp = _this->vu.iss.clock.get_cycles() +
                     insn->latency + 1;
+                // The unit keeps draining its pipeline after the last word
+                // entered, which gates datapath switches
+                _this->unit_busy_until[unit_class] = pending_insn->commit_done_cycle +
+                    pending_insn->pipeline_latency + 3;
                 _this->draining.push_back(pending_insn);
             }
 

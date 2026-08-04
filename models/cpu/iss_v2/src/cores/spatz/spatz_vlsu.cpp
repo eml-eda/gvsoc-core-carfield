@@ -138,6 +138,7 @@ void VuLsu::reset(bool active)
         }
 
         this->op_timestamp = -1;
+        this->prev_is_indexed = false;
     }
 }
 
@@ -156,6 +157,7 @@ void VuLsu::enqueue_insn(PendingInsn *pending_insn)
     this->insn_last = (this->insn_last + 1) % VuLsu::queue_size;
     slot.insn = pending_insn;
     slot.nb_pending_bursts = 0;
+    slot.enqueue_cycle = this->vu.iss.clock.get_cycles();
     slot.done = false;
     this->nb_pending_insn.inc(1);
     this->nb_waiting_insn++;
@@ -233,11 +235,32 @@ void VuLsu::handle_access(iss_insn_t *insn, bool is_write, int reg, bool do_stri
     this->reg_indexed = reg_indexed;
     this->pending_elem = 0;
 
+    // A unit-stride access whose base address is not aligned on the lane
+    // width is issued one element per request, like on RTL where the VLSU
+    // falls back to a single-element mode. This also keeps every request
+    // within a single TCDM bank word, since the interconnect does not split
+    // requests. Elements themselves must be naturally aligned, like on RTL.
+    this->single_element = !do_stride && reg_indexed == -1 &&
+        (this->pending_addr & (this->vu.lane_width - 1)) != 0;
+
+    if (this->single_element)
+    {
+        // Each port owns full lane-width words of the vector, like on RTL,
+        // so that elements sharing a word are issued on the same port on
+        // consecutive cycles instead of conflicting on the same memory bank
+        // in the same cycle.
+        this->se_base_addr = this->pending_addr;
+        this->se_base_velem = this->pending_velem;
+        this->se_base_vstart = this->vstart;
+        this->se_nb_elems = this->pending_size / elem_size;
+        this->se_port_count.assign(this->nb_ports, 0);
+    }
+
     // ON RTL, it takes some time to switch from one instruction to another, and more if it is from
     // load to store, probably due to latency to write to regfile.
     if (this->op_timestamp != -1)
     {
-        this->op_timestamp += this->prev_is_write != is_write ? (is_write ? 7 : 3) : (is_write ? 0 : 1);
+        this->op_timestamp += this->prev_is_write != is_write ? (is_write ? 7 : 3) : 0;
     }
 
     this->prev_is_write = is_write;
@@ -412,7 +435,43 @@ void VuLsu::fsm_handler(vp::Block *__this, vp::ClockEvent *event)
             // If so, it becomes the on-going instruction and gets armed with the allowed start of its request issuing phase
             // according to its instruction latency. 
             // Only the active on-going instruction may consume instruction latency.
-            pending_insn->timestamp = _this->vu.iss.clock.get_cycles() + insn->latency;
+            // Queue wait time is credited against the dispatch latency so that
+            // back-to-back loads run with a single idle cycle between their
+            // request streams, like on RTL.
+            int64_t lat = insn->latency;
+            void *handler = insn->decoder_item->u.insn.block_handler;
+            bool is_load = handler == (void *)&VuLsu::handle_insn_load ||
+                handler == (void *)&VuLsu::handle_insn_load_strided ||
+                handler == (void *)&VuLsu::handle_insn_load_indexed;
+            if (_this->op_timestamp != -1 && !_this->prev_is_write && is_load)
+            {
+                int64_t elapsed = _this->vu.iss.clock.get_cycles() - slot.enqueue_cycle - 1;
+                lat = lat - elapsed;
+                if (lat < 0)
+                {
+                    lat = 0;
+                }
+            }
+            // Stores pay one extra dispatch cycle to read their data out of
+            // the VRF before the requests can go out. Like the indexed
+            // startup, it only shows in back-to-back store streams;
+            // interleaved with other work it is hidden.
+            if (!is_load && _this->prev_is_write)
+            {
+                lat += 1;
+            }
+            // Indexed accesses first fetch the index vector from the VRF
+            // before the address generation can start. This only shows in
+            // back-to-back indexed streams, where the index fetches compete
+            // for the VRF port; interleaved with other work it is hidden.
+            bool is_indexed = handler == (void *)&VuLsu::handle_insn_load_indexed ||
+                handler == (void *)&VuLsu::handle_insn_store_indexed;
+            if (is_indexed && _this->prev_is_indexed)
+            {
+                lat += 3;
+            }
+            _this->prev_is_indexed = is_indexed;
+            pending_insn->timestamp = _this->vu.iss.clock.get_cycles() + lat;
             ((void (*)(VuLsu *, iss_insn_t *))insn->decoder_item->u.insn.block_handler)(_this, insn);
             _this->insn_ongoing = _this->insn_first_waiting;
             _this->insn_first_waiting = (_this->insn_first_waiting + 1) % VuLsu::queue_size;
@@ -451,7 +510,23 @@ void VuLsu::fsm_handler(vp::Block *__this, vp::ClockEvent *event)
                 {
                     uint64_t size;
 
-                    if (_this->strided ||  _this->reg_indexed != -1)
+                    // In single-element mode, get the next element owned by
+                    // this port, and skip the port once it went through all
+                    // its elements
+                    int se_elem = -1;
+                    if (_this->single_element)
+                    {
+                        int elems_per_word = _this->vu.lane_width / _this->elem_size;
+                        int count = _this->se_port_count[i];
+                        se_elem = (count / elems_per_word) * elems_per_word * _this->nb_ports +
+                            i * elems_per_word + (count % elems_per_word);
+                        if (se_elem >= _this->se_nb_elems)
+                        {
+                            continue;
+                        }
+                    }
+
+                    if (_this->strided ||  _this->reg_indexed != -1 || _this->single_element)
                     {
                         size = _this->elem_size;
                     }
@@ -475,6 +550,11 @@ void VuLsu::fsm_handler(vp::Block *__this, vp::ClockEvent *event)
 
                     iss_reg_t addr = _this->pending_addr;
 
+                    if (_this->single_element)
+                    {
+                        addr = _this->se_base_addr + se_elem * _this->elem_size;
+                    }
+
                     if (_this->reg_indexed != -1)
                     {
                         uint64_t offset = velem_get_value(&_this->vu.iss, _this->reg_indexed, _this->pending_elem,
@@ -494,7 +574,8 @@ void VuLsu::fsm_handler(vp::Block *__this, vp::ClockEvent *event)
                     rob_entry.req = req;
                     rob_entry.slot = &slot;
                     rob_entry.vreg = _this->pending_vreg;
-                    rob_entry.vstart = _this->vstart;
+                    rob_entry.vstart = _this->single_element ?
+                        _this->se_base_vstart + se_elem : _this->vstart;
                     rob_entry.elem_size = _this->elem_size;
                     rob_entry.size = size;
 
@@ -507,7 +588,8 @@ void VuLsu::fsm_handler(vp::Block *__this, vp::ClockEvent *event)
                     slot.nb_pending_bursts++;
                     _this->vstart += size / _this->elem_size;
 
-                    req->set_data(_this->pending_velem);
+                    req->set_data(_this->single_element ?
+                        _this->se_base_velem + se_elem * _this->elem_size : _this->pending_velem);
 
                     vp::IoReqStatus err = _this->ports[i].req(req);
 
@@ -547,7 +629,11 @@ void VuLsu::fsm_handler(vp::Block *__this, vp::ClockEvent *event)
                     // Prepare the next burst if not DENIED
                     if (err != vp::IO_REQ_DENIED)
                     {
-                        if (_this->reg_indexed == -1)
+                        if (_this->single_element)
+                        {
+                            _this->se_port_count[i]++;
+                        }
+                        else if (_this->reg_indexed == -1)
                         {
                             _this->pending_addr += _this->strided ? _this->stride : size;
                         }
@@ -564,8 +650,13 @@ void VuLsu::fsm_handler(vp::Block *__this, vp::ClockEvent *event)
                             // Keep the last bus operation time to model the gap before the next one.
                             _this->op_timestamp = _this->vu.iss.clock.get_cycles() + 1;
 
-                            // Keep one extra cycle before retirement after the last burst is issued.
-                            pending_insn->timestamp = pending_insn->timestamp + 1;
+                            // Keep one extra cycle before retirement after the last burst is
+                            // issued for stores. Loads retire with their last burst so that
+                            // back-to-back loads stream like on RTL.
+                            if (_this->pending_is_write)
+                            {
+                                pending_insn->timestamp = pending_insn->timestamp + 1;
+                            }
 
                             // Mark the instruction done once all bursts have been issued.
                             slot.done = true;
