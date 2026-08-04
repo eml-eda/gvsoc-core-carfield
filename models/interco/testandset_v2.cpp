@@ -15,18 +15,32 @@
 // when the memory answers inline (IO_REQ_DONE) that happens in req(), and when
 // it defers (IO_REQ_GRANTED) it happens in the response callback.
 
+#include <vector>
 #include <vp/vp.hpp>
 #include <vp/itf/io_v2.hpp>
+#include <vp/debug_mem.hpp>
 #include <interco/testandset_v2/testandset_config.hpp>
 
-class Testandset : public vp::Component
+class Testandset : public vp::Component, public vp::DebugMemIf
 {
 public:
     Testandset(vp::ComponentConf &config);
 
+    // Backdoor debug access (vp/debug_mem.hpp): a backdoor read must not take
+    // the lock, so both views forward untouched to the memory downstream.
+    // Without this, semi-hosting / GDB / the proxy would have no path to a
+    // memory sitting behind this component.
+    vp::DebugMemIf *debug_mem_if() override { return this; }
+    int debug_mem_access(uint64_t addr, uint8_t *data, uint64_t size,
+        bool is_write) override;
+    void debug_mem_regions(std::vector<vp::DebugMemRegion> &regions,
+        uint64_t local_base, uint64_t window_size, uint64_t entry_base,
+        int depth) override;
+
     TestandsetConfig cfg;
 
 private:
+    vp::DebugMemIf *resolve_debug_mem();
     static vp::IoReqStatus input_req(vp::Block *__this, vp::IoReq *req);
     static vp::IoReqStatus passthrough_req(vp::Block *__this, vp::IoReq *req);
     static vp::IoRespAck output_resp(vp::Block *__this, vp::IoReq *req);
@@ -146,6 +160,38 @@ void Testandset::output_retry(vp::Block *__this, vp::IoRetryChannel channel)
 {
     Testandset *_this = (Testandset *)__this;
     _this->pending_itf->retry(channel);
+}
+
+vp::DebugMemIf *Testandset::resolve_debug_mem()
+{
+    std::vector<vp::SlavePort *> finals = this->output_itf.get_final_ports();
+    if (finals.empty() || finals[0]->get_owner() == nullptr)
+    {
+        return nullptr;
+    }
+    return finals[0]->get_owner()->debug_mem_if();
+}
+
+int Testandset::debug_mem_access(uint64_t addr, uint8_t *data, uint64_t size,
+    bool is_write)
+{
+    vp::DebugMemIf *target = this->resolve_debug_mem();
+    return target ? target->debug_mem_access(addr, data, size, is_write) : -1;
+}
+
+void Testandset::debug_mem_regions(std::vector<vp::DebugMemRegion> &regions,
+    uint64_t local_base, uint64_t window_size, uint64_t entry_base, int depth)
+{
+    if (depth >= vp::DebugMemIf::MAX_DEPTH)
+    {
+        return;
+    }
+    vp::DebugMemIf *target = this->resolve_debug_mem();
+    if (target != nullptr)
+    {
+        target->debug_mem_regions(regions, local_base, window_size, entry_base,
+            depth + 1);
+    }
 }
 
 extern "C" vp::Component *gv_new(vp::ComponentConf &config)
