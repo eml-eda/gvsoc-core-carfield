@@ -156,7 +156,8 @@ class Chip(gvsoc.systree.Component):
         if which == 'dramsys':
             import memory.dramsys
             mem = memory.dramsys.Dramsys(self, 'mem', version=2,
-                                         dram_type='ddr4-example.json')
+                                         dram_type='ddr4-example.json',
+                                         access_size=beat_width)
             clock = vp.clock_domain.Clock_domain(self, 'clock', frequency=1_200_000_000)
         else:
             mem = Ramulator(self, 'mem', config=RamulatorConfig(
