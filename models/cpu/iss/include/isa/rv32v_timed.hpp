@@ -451,6 +451,48 @@ static inline iss_reg_t vrsub_vi_exec(Iss *iss, iss_insn_t *insn, iss_reg_t pc)
 }
 
 
+// Mask-register logical instructions (`vmand.mm` and friends).
+//
+// These are bitwise operations over the first vl BITS of the registers, one
+// bit per element, so they do not depend on sew or lmul and cannot be
+// expressed with the element helpers. Bits past vl are tail-agnostic; they
+// are left undisturbed here.
+//
+// The whole operation runs on the first chunk and later chunks are skipped.
+// Splitting it would be wrong, not just wasteful: vd is allowed to alias vs1
+// or vs2, so a byte straddling two chunks would be recomputed from a value
+// already overwritten, and only and/or survive that (nand/xor do not).
+// Timing is unaffected -- the vector unit still paces the instruction over
+// its chunks, this only decides where the result is produced.
+#define VMASK_LOGICAL_EXEC(name, expr)                                        \
+static inline iss_reg_t name##_exec(Iss *iss, iss_insn_t *insn, iss_reg_t pc) \
+{                                                                             \
+    if (VSTART == 0)                                                          \
+    {                                                                         \
+        unsigned int nb_bytes = (iss->csr.vl.value + 7) / 8;                  \
+        uint8_t *vd  = iss->vector.vregs[REG_OUT(0)];                         \
+        uint8_t *vs1 = iss->vector.vregs[REG_IN(0)];                          \
+        uint8_t *vs2 = iss->vector.vregs[REG_IN(1)];                          \
+        for (unsigned int i = 0; i < nb_bytes; i++)                           \
+        {                                                                     \
+            uint8_t a = vs2[i];                                               \
+            uint8_t b = vs1[i];                                               \
+            (void)a; (void)b;                                                 \
+            vd[i] = (uint8_t)(expr);                                          \
+        }                                                                     \
+    }                                                                         \
+    return iss_insn_next(iss, insn, pc);                                      \
+}
+
+VMASK_LOGICAL_EXEC(vmand_mm,     a & b)
+VMASK_LOGICAL_EXEC(vmnand_mm,  ~(a & b))
+VMASK_LOGICAL_EXEC(vmandnot_mm,  a & ~b)
+VMASK_LOGICAL_EXEC(vmor_mm,      a | b)
+VMASK_LOGICAL_EXEC(vmnor_mm,   ~(a | b))
+VMASK_LOGICAL_EXEC(vmornot_mm,   a | ~b)
+VMASK_LOGICAL_EXEC(vmxor_mm,     a ^ b)
+VMASK_LOGICAL_EXEC(vmxnor_mm,  ~(a ^ b))
+
 static inline iss_reg_t vand_vv_exec(Iss *iss, iss_insn_t *insn, iss_reg_t pc)
 {
     unsigned int sewb = iss->vector.sewb;
@@ -3486,10 +3528,13 @@ static inline iss_reg_t vfsgnj_vv_exec(Iss *iss, iss_insn_t *insn, iss_reg_t pc)
     unsigned int lmul = iss->vector.lmul;
     for (unsigned int i=VSTART; i<VEND; i++)
     {
-        uint64_t in0 = velem_get_value(iss, REG_IN(0), i, sewb, lmul);
-        uint64_t in1 = velem_get_value(iss, REG_IN(1), i, sewb, lmul);
-        uint64_t res = LIB_FF_CALL2(lib_flexfloat_sgnj, in1, in0, iss->vector.exp, iss->vector.mant);
-        velem_set_value(iss, REG_OUT(0), i, sewb, res);
+        if (velem_is_active(iss, i, UIM_GET(0)))
+        {
+            uint64_t in0 = velem_get_value(iss, REG_IN(0), i, sewb, lmul);
+            uint64_t in1 = velem_get_value(iss, REG_IN(1), i, sewb, lmul);
+            uint64_t res = LIB_FF_CALL2(lib_flexfloat_sgnj, in1, in0, iss->vector.exp, iss->vector.mant);
+            velem_set_value(iss, REG_OUT(0), i, sewb, res);
+        }
     }
     return iss_insn_next(iss, insn, pc);
 }
@@ -3501,9 +3546,12 @@ static inline iss_reg_t vfsgnj_vf_exec(Iss *iss, iss_insn_t *insn, iss_reg_t pc)
     uint64_t in0 = RVV_FREG_GET(0);
     for (unsigned int i=VSTART; i<VEND; i++)
     {
-        uint64_t in1 = velem_get_value(iss, REG_IN(1), i, sewb, lmul);
-        uint64_t res = LIB_FF_CALL2(lib_flexfloat_sgnj, in1, in0, iss->vector.exp, iss->vector.mant);
-        velem_set_value(iss, REG_OUT(0), i, sewb, res);
+        if (velem_is_active(iss, i, UIM_GET(0)))
+        {
+            uint64_t in1 = velem_get_value(iss, REG_IN(1), i, sewb, lmul);
+            uint64_t res = LIB_FF_CALL2(lib_flexfloat_sgnj, in1, in0, iss->vector.exp, iss->vector.mant);
+            velem_set_value(iss, REG_OUT(0), i, sewb, res);
+        }
     }
     return iss_insn_next(iss, insn, pc);
 }
@@ -3514,10 +3562,13 @@ static inline iss_reg_t vfsgnjn_vv_exec(Iss *iss, iss_insn_t *insn, iss_reg_t pc
     unsigned int lmul = iss->vector.lmul;
     for (unsigned int i=VSTART; i<VEND; i++)
     {
-        uint64_t in0 = velem_get_value(iss, REG_IN(0), i, sewb, lmul);
-        uint64_t in1 = velem_get_value(iss, REG_IN(1), i, sewb, lmul);
-        uint64_t res = LIB_FF_CALL2(lib_flexfloat_sgnjn, in1, in0, iss->vector.exp, iss->vector.mant);
-        velem_set_value(iss, REG_OUT(0), i, sewb, res);
+        if (velem_is_active(iss, i, UIM_GET(0)))
+        {
+            uint64_t in0 = velem_get_value(iss, REG_IN(0), i, sewb, lmul);
+            uint64_t in1 = velem_get_value(iss, REG_IN(1), i, sewb, lmul);
+            uint64_t res = LIB_FF_CALL2(lib_flexfloat_sgnjn, in1, in0, iss->vector.exp, iss->vector.mant);
+            velem_set_value(iss, REG_OUT(0), i, sewb, res);
+        }
     }
     return iss_insn_next(iss, insn, pc);
 }
@@ -3529,9 +3580,12 @@ static inline iss_reg_t vfsgnjn_vf_exec(Iss *iss, iss_insn_t *insn, iss_reg_t pc
     uint64_t in0 = RVV_FREG_GET(0);
     for (unsigned int i=VSTART; i<VEND; i++)
     {
-        uint64_t in1 = velem_get_value(iss, REG_IN(1), i, sewb, lmul);
-        uint64_t res = LIB_FF_CALL2(lib_flexfloat_sgnjn, in1, in0, iss->vector.exp, iss->vector.mant);
-        velem_set_value(iss, REG_OUT(0), i, sewb, res);
+        if (velem_is_active(iss, i, UIM_GET(0)))
+        {
+            uint64_t in1 = velem_get_value(iss, REG_IN(1), i, sewb, lmul);
+            uint64_t res = LIB_FF_CALL2(lib_flexfloat_sgnjn, in1, in0, iss->vector.exp, iss->vector.mant);
+            velem_set_value(iss, REG_OUT(0), i, sewb, res);
+        }
     }
     return iss_insn_next(iss, insn, pc);
 }
@@ -3542,10 +3596,13 @@ static inline iss_reg_t vfsgnjx_vv_exec(Iss *iss, iss_insn_t *insn, iss_reg_t pc
     unsigned int lmul = iss->vector.lmul;
     for (unsigned int i=VSTART; i<VEND; i++)
     {
-        uint64_t in0 = velem_get_value(iss, REG_IN(0), i, sewb, lmul);
-        uint64_t in1 = velem_get_value(iss, REG_IN(1), i, sewb, lmul);
-        uint64_t res = LIB_FF_CALL2(lib_flexfloat_sgnjx, in1, in0, iss->vector.exp, iss->vector.mant);
-        velem_set_value(iss, REG_OUT(0), i, sewb, res);
+        if (velem_is_active(iss, i, UIM_GET(0)))
+        {
+            uint64_t in0 = velem_get_value(iss, REG_IN(0), i, sewb, lmul);
+            uint64_t in1 = velem_get_value(iss, REG_IN(1), i, sewb, lmul);
+            uint64_t res = LIB_FF_CALL2(lib_flexfloat_sgnjx, in1, in0, iss->vector.exp, iss->vector.mant);
+            velem_set_value(iss, REG_OUT(0), i, sewb, res);
+        }
     }
     return iss_insn_next(iss, insn, pc);
 }
@@ -3557,9 +3614,12 @@ static inline iss_reg_t vfsgnjx_vf_exec(Iss *iss, iss_insn_t *insn, iss_reg_t pc
     uint64_t in0 = RVV_FREG_GET(0);
     for (unsigned int i=VSTART; i<VEND; i++)
     {
-        uint64_t in1 = velem_get_value(iss, REG_IN(1), i, sewb, lmul);
-        uint64_t res = LIB_FF_CALL2(lib_flexfloat_sgnjx, in1, in0, iss->vector.exp, iss->vector.mant);
-        velem_set_value(iss, REG_OUT(0), i, sewb, res);
+        if (velem_is_active(iss, i, UIM_GET(0)))
+        {
+            uint64_t in1 = velem_get_value(iss, REG_IN(1), i, sewb, lmul);
+            uint64_t res = LIB_FF_CALL2(lib_flexfloat_sgnjx, in1, in0, iss->vector.exp, iss->vector.mant);
+            velem_set_value(iss, REG_OUT(0), i, sewb, res);
+        }
     }
     return iss_insn_next(iss, insn, pc);
 }

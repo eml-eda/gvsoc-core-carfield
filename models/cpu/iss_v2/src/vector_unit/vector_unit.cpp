@@ -24,6 +24,24 @@
  #include <cpu/iss_v2/include/cores/vector_unit/vector_unit.hpp>
 
 
+// Vector registers this instruction reads, as the scoreboard must see them.
+// A masked instruction (vm bit clear) also reads v0, which is implicit in
+// the encoding and therefore absent from the decoded register arguments:
+// without it a masked operation can be issued -- and read its mask -- before
+// the instruction writing v0 has committed, which makes the result depend on
+// the schedule. Both the dependency setup and the release path must use this
+// same effective mask, or v0's reader bit would never be cleared.
+static inline uint32_t vu_in_vreg_mask(iss_insn_t *insn)
+{
+    uint32_t mask = insn->sb_in_vreg_mask;
+    if (insn->desc->has_vm && insn->uim[0] == 0)
+    {
+        mask |= 1;
+    }
+    return mask;
+}
+
+
 Vu::Vu(Iss &iss)
     : Block(&iss, "ara"), iss(iss),
     fsm_event(this, &Vu::fsm_handler),
@@ -252,7 +270,7 @@ void Vu::insn_enqueue(InsnEntry *entry)
 
         this->event_pc.event((uint8_t *)&insn->addr);
 
-        uint32_t mask = insn->sb_in_vreg_mask;
+        uint32_t mask = vu_in_vreg_mask(insn);
         this->insns_in_deps[pending_insn->id] = 0;
         while (mask)
         {
@@ -286,6 +304,9 @@ void Vu::insn_enqueue(InsnEntry *entry)
                 insn_mask &= ~(1 << insn_id);
             }
 
+            // Write-after-read: the readers of the destination land in the
+            // same mask as its writers, and both hazards block through the
+            // same gate in insn_ready.
             insn_mask = this->reading_insns[id];
             while (insn_mask)
             {
@@ -356,7 +377,7 @@ void Vu::insn_end(PendingInsn *pending_insn)
     pending_insn->done = true;
 
     // Unmark this instruction in the reading instructions
-    uint32_t mask = insn->sb_in_vreg_mask;
+    uint32_t mask = vu_in_vreg_mask(insn);
     while (mask)
     {
         int id = __builtin_ctz(mask);
@@ -471,10 +492,28 @@ void Vu::isa_init()
 
 bool Vu::insn_ready(PendingInsn *insn)
 {
-    // WAW and WAR deps cannot be chained and are blocking
+    // Output hazards -- write-after-write and write-after-read alike -- block
+    // until the dependency retires: insns_out_deps holds both the writers and
+    // the readers of this instruction's destination registers. This is
+    // pessimistic against the RTL, whose scoreboard makes no distinction
+    // between hazard kinds at all: RAW, WAR and WAW deps land in one
+    // per-instruction bitmask and a single per-cycle gate lets any dependent
+    // port proceed whenever every dep accessed the VRF the previous cycle
+    // (spatz_controller.sv, sb_enable_o: &(~deps | wrote_result_q)), so both
+    // hazards chain for free there. Trailing rules approximating that (word
+    // trailing behind a memory producer, and behind a reader) were tried and
+    // removed: a live-code write-after-write always comes glued to the
+    // write-after-read on the value's consumer -- a pure rewrite means the
+    // first write was dead code -- so across the benchmark suite the rules
+    // only moved kernels below noise, while their calibration probes had to
+    // be written with artificial dead-write patterns. Better to implement
+    // the same chaining as the RTL -- one dep bitmask and a per-cycle
+    // accessed-last-cycle credit -- than to approximate hazard kinds
+    // separately.
     if (this->insns_out_deps[insn->id] != 0)
     {
-        this->trace.msg(vp::Trace::LEVEL_TRACE, "Instruction output dependency (id: %d, deps: 0x%x)\n",
+        this->trace.msg(vp::Trace::LEVEL_TRACE,
+            "Instruction output-hazard dependency (id: %d, deps: 0x%lx)\n",
             insn->id, this->insns_out_deps[insn->id]);
         return false;
     }

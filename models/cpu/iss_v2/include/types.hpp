@@ -353,6 +353,12 @@ typedef struct iss_decoder_insn_s
     bool tags[ISA_NB_TAGS];
     uint8_t args_order[ISS_MAX_DECODE_ARGS];
 #if defined(CONFIG_ISS_HAS_VECTOR)
+    // The instruction carries a vm (mask-enable) bit in uim[0], i.e. when
+    // that bit is 0 it reads v0 as its mask. v0 is implicit in the encoding
+    // and so never appears in the decoded register arguments; the vector
+    // scoreboard has to add it by hand, or a masked instruction can be
+    // issued before the instruction producing its mask has committed.
+    int has_vm = 0;
     float chaining_factor = 1.0f;
     float out_chaining_factor = 1.0f;
     // Right-shift applied to the vector unit's per-cycle element rate.
@@ -361,6 +367,16 @@ typedef struct iss_decoder_insn_s
     // cycles for widening — widening_upper mux — and halves nr_elem_word
     // for narrowing), so they set this to 1.
     int elem_rate_shift = 0;
+    // Left-shift applied to the same rate, for the instructions that consume
+    // elements FASTER than the nominal per-cycle chunk. Reductions set this
+    // to 1: the accumulator pass reads a full VRF word per cycle and feeds
+    // the (pipelined) adder tree, so the element phase costs half of what a
+    // normal computational instruction costs, and the serialization shows up
+    // as a fixed drain instead (carried by the instruction latency).
+    // Measured on the RTL with dependent vfredusum chains (e64): 30.3
+    // cycles at vl=16, 35.2 at vl=32, 43.2 at vl=64 -> 0.27 cycles/element
+    // plus a constant ~26.
+    int elem_rate_boost = 0;
     // FPU pipeline class, used to derive the fpnew pipeline depth (the
     // per-format register stages of the spatz timing configuration).
     // 0: not an FPU op (or covered by its own timing model, e.g.

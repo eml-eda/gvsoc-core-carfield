@@ -160,6 +160,12 @@ public:
 
 #if defined(CONFIG_GVSOC_ISS_VLSU_V2)
 
+// Largest number of bytes a single VLSU request can carry. A request never
+// spans more than one lane word, and the widest lane the model supports is
+// 8 bytes; the per-request masking buffers are sized from this.
+#define VLSU_MAX_REQ_SIZE 8
+
+
 // Block processing load/store vector instructions, io_v2 variant.
 //
 // Functionally mirrors the v1 ``VuLsu`` (same FSM, same instruction handling)
@@ -276,6 +282,14 @@ private:
     bool prev_is_indexed;
     bool started;
     int vstart;
+    // The on-going access is masked by v0 (its vm bit is clear). On RTL the
+    // mask never suppresses a memory request -- it is applied as a byte
+    // strobe on stores (mem_req_strb) and as a write byte enable on the VRF
+    // write-back of loads (vrf_req_d.wbe), see spatz_vlsu.sv. The model does
+    // the same, so masking costs no cycles and the request stream is
+    // identical to the unmasked one.
+    bool masked;
+
 
     // Ongoing instruction
     int insn_ongoing;
@@ -324,6 +338,19 @@ private:
         int elem_size = 0;
         int vstart = 0;
         int size = 0;
+
+        // Masked access support. A masked LOAD lands in `scratch` instead of
+        // straight in the vector register file, and the active elements are
+        // merged into `vrf_dest` when the entry retires, so the inactive ones
+        // keep their previous value (mask-undisturbed). A masked STORE points
+        // the request's byte strobe at `strb`, so the target commits only the
+        // active elements. `masked` is false for the common unmasked case, in
+        // which neither buffer is touched.
+        bool masked = false;
+        uint8_t *vrf_dest = nullptr;
+        // Sized for one request, which never exceeds the lane width.
+        uint8_t scratch[VLSU_MAX_REQ_SIZE];
+        uint8_t strb[VLSU_MAX_REQ_SIZE];
     };
 
     // Reorder buffer
@@ -457,7 +484,6 @@ private:
     bool prev_is_indexed;
     bool started;
     int vstart;
-
     // Instruction currently active in the VLSU. pending_insn->timestamp is reused across phases:
     // 1. as an enqueue-cycle guard, 2. as the request issuing start time after instruction latency, 
     // and 3. for memory-response/retirement timing. Keeping this index separate from insn_first_waiting 
@@ -515,7 +541,7 @@ private:
     };
 
     // Reorder buffer
-    std::vector<std::vector<VlsuRobEntry>> rob; 
+    std::vector<std::vector<VlsuRobEntry>> rob;
     // Next available entry in the ROB for each port
     std::vector<int> rob_next;
     // The first entry in the ROB which is waiting for response for each port
@@ -739,6 +765,10 @@ private:
 
     std::queue<PendingInsn *> stalled_insns;
     std::vector<uint64_t> insns_in_deps;
+    // Writers AND readers of this instruction's destination registers: both
+    // write-after-write and write-after-read block until the dependency
+    // retires, through the same gate in Vu::insn_ready. See the note there
+    // about the RTL chaining this does not model.
     std::vector<uint64_t> insns_out_deps;
     uint64_t writing_insns[32];
     uint64_t reading_insns[32];

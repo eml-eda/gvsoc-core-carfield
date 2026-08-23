@@ -39,6 +39,23 @@
 
 #include <cpu/iss_v2/include/cores/vector_unit/vector_unit.hpp>
 
+// Cycle the RTL VLSU spends between two vector memory instructions. It is a
+// structural one, not a fitted number: in spatz_vlsu.sv a port's element
+// counter reaching its maximum is registered (mem_port_finished_q), the next
+// instruction is only accepted the cycle after (mem_spatz_req_ready), and its
+// counters load then (mem_counter_load), so no request can go out in that
+// cycle. The steady-state cost of a unit-stride load is therefore K + 1,
+// where K = vl/NrMemPorts is the number of per-port requests.
+//
+// Measured differentially against the RTL (tests/calibration/vlsu_rate),
+// cycles per instruction against the K+1 prediction:
+//
+//     m1: 3.27 (3)   m2: 4.92 (5)   m4: 9.04 (9)   m8: 17.10 (17)
+//
+// Loads only: the store path already reproduces the RTL (12.10 measured
+// against 12.16 modelled at m4), so charging it there would overshoot.
+#define VLSU_INSN_DISPATCH_COST 1
+
 VuLsu::VuLsu(Vu &vu, Iss &iss)
 : VuBlock(&vu, "vlsu"), vu(vu),
 nb_pending_insn(*this, "nb_pending_insn", 8, true),
@@ -256,6 +273,13 @@ void VuLsu::handle_access(iss_insn_t *insn, bool is_write, int reg, bool do_stri
     this->reg_indexed = reg_indexed;
     this->pending_elem = 0;
 
+    // Masked access: v0 selects which elements take part. On RTL this never
+    // changes the request stream -- spatz_vlsu.sv issues a request for every
+    // element position and applies v0 as a byte strobe on stores
+    // (mem_req_strb) and as a VRF write byte enable on loads (vrf_req_d.wbe)
+    // -- so the model applies it the same way, per request, at no cycle cost.
+    this->masked = insn->desc->has_vm && insn->uim[0] == 0;
+
     // A unit-stride access whose base address is not aligned on the lane
     // width is issued one element per request, like on RTL where the VLSU
     // falls back to a single-element mode. This also keeps every request
@@ -281,6 +305,12 @@ void VuLsu::handle_access(iss_insn_t *insn, bool is_write, int reg, bool do_stri
     // load to store, probably due to latency to write to regfile.
     // Same-type transitions pace at 1 cycle (the +1 below); switches add
     // their calibrated turnaround on top.
+    // Re-verified against the RTL (e64, LMUL=4): an alternating load/store
+    // stream costs 13.7 cycles/insn and a load/load/store/store stream
+    // 12.6, against 9.8 for pure loads and 14.8 for pure stores. Most of
+    // the 7/3 is absorbed by the ongoing transfer, and what remains matches
+    // those two streams to within 0.5 cycles; setting the penalties to zero
+    // makes them 14% and 8% fast, so they are load-bearing as they stand.
     if (this->op_timestamp != -1)
     {
         this->op_timestamp += this->prev_is_write != is_write ? (is_write ? 7 : 3) : 0;
@@ -412,6 +442,20 @@ void VuLsu::burst_done(vp::IoReq *req)
             int nb_elem = entry.size / entry.elem_size;
             int end_elem = first_elem + nb_elem;
 
+            // Masked load: the data landed in the entry's scratch buffer, so
+            // only the active elements reach the register file.
+            if (entry.masked && entry.vrf_dest != nullptr)
+            {
+                for (int i = 0; i < entry.size; i++)
+                {
+                    if (entry.strb[i])
+                    {
+                        entry.vrf_dest[i] = entry.scratch[i];
+                    }
+                }
+                entry.vrf_dest = nullptr;
+            }
+
             this->vu.insn_commit(pending_insn, entry.size);
             this->vu.exec_insn_chunk(insn, pending_insn, first_elem, end_elem, nb_elem);
 
@@ -490,9 +534,15 @@ void VuLsu::fsm_handler(vp::Block *__this, vp::ClockEvent *event)
             // (NrParallelInstructions slots) happened while the previous one
             // was still issuing requests, so the cycles already spent waiting
             // in the queue (beyond the enqueue guard) count against the
-            // dispatch latency and back-to-back unit-stride loads run with a
-            // single idle cycle between their request streams. Other
-            // transitions (stores, load/store switches) keep the full
+            // dispatch latency. The discount bottoms out at
+            // VLSU_INSN_DISPATCH_COST, not at zero: even in a perfect stream
+            // the RTL VLSU cannot start the next instruction's requests in
+            // the same cycle it retires the previous one's. Measured on the
+            // RTL (e64, LMUL=4, 256 B per access = 8 cycles of data): a load
+            // stream costs 9.3-9.8 cycles/insn, i.e. ~1 cycle of
+            // per-instruction overhead, flat in LMUL (m8: 16.5 vs 16 of
+            // data) and in core count (1 core: 8.6 vs 2 cores: 9.0).
+            // Other transitions (stores, load/store switches) keep the full
             // calibrated pacing.
             int64_t lat = insn->latency;
             void *handler = insn->decoder_item->u.insn.block_handler;
@@ -520,11 +570,22 @@ void VuLsu::fsm_handler(vp::Block *__this, vp::ClockEvent *event)
             // before the address generation can start. This only shows in
             // back-to-back indexed streams, where the index fetches compete
             // for the VRF port; interleaved with other work it is hidden.
+            // RTL delta over a unit-stride load stream: 12.9 - 9.8 = 3.1
+            // cycles (e64, LMUL=4).
             bool is_indexed = handler == (void *)&VuLsu::handle_insn_load_indexed ||
                 handler == (void *)&VuLsu::handle_insn_store_indexed;
             if (is_indexed && _this->prev_is_indexed)
             {
                 lat += 3;
+            }
+            // The instruction handover cycle (see the constant above),
+            // paid by every load whatever came before it -- it is the
+            // counter reload of spatz_vlsu.sv, not a property of the
+            // transition. Stores are not charged: the store path already
+            // reproduces the RTL rate (12.10 measured, 12.16 modelled).
+            if (is_load)
+            {
+                lat += VLSU_INSN_DISPATCH_COST;
             }
             _this->prev_is_indexed = is_indexed;
             pending_insn->timestamp = _this->vu.iss.clock.get_cycles() + lat;
@@ -651,8 +712,42 @@ void VuLsu::fsm_handler(vp::Block *__this, vp::ClockEvent *event)
                 slot.nb_pending_bursts++;
                 _this->vstart += size / _this->elem_size;
 
-                req->set_data(_this->single_element ?
-                    _this->se_base_velem + se_elem * _this->elem_size : _this->pending_velem);
+                uint8_t *velem = _this->single_element ?
+                    _this->se_base_velem + se_elem * _this->elem_size : _this->pending_velem;
+
+                rob_entry.masked = _this->masked;
+                if (!_this->masked)
+                {
+                    req->set_data(velem);
+                }
+                else
+                {
+                    // Expand v0 into a per-byte enable covering the elements
+                    // this request carries. A store hands it to the target as
+                    // the request's strobe; a load lands in the entry's
+                    // scratch buffer and only the enabled bytes are merged
+                    // into the register file when the entry retires, so the
+                    // inactive elements keep their value (mask-undisturbed).
+                    int nb_elem = size / _this->elem_size;
+                    for (int e = 0; e < nb_elem; e++)
+                    {
+                        bool active = velem_is_active(&_this->vu.iss,
+                            rob_entry.vstart + e, 0);
+                        memset(&rob_entry.strb[e * _this->elem_size],
+                            active ? 0xff : 0, _this->elem_size);
+                    }
+
+                    if (_this->pending_is_write)
+                    {
+                        req->set_data(velem);
+                        req->set_strb(rob_entry.strb);
+                    }
+                    else
+                    {
+                        rob_entry.vrf_dest = velem;
+                        req->set_data(rob_entry.scratch);
+                    }
+                }
 
                 // The burst is dispatched to this port whatever the downstream
                 // answers: a DENIED burst is parked on the port and re-issued

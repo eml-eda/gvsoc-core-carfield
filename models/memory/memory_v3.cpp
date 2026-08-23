@@ -79,7 +79,10 @@ private:
     static void power_ctrl_sync(vp::Block *__this, bool value);
     static void meminfo_sync_back(vp::Block *__this, void **value);
     static void meminfo_sync(vp::Block *__this, void *value);
-    vp::IoReqStatus handle_write(uint64_t addr, uint64_t size, uint8_t *data);
+    // `strb`, when not NULL, is a per-byte enable: only the bytes whose
+    // strobe is non-zero are committed. NULL writes the whole range.
+    vp::IoReqStatus handle_write(uint64_t addr, uint64_t size, uint8_t *data,
+        uint8_t *strb = nullptr);
     vp::IoReqStatus handle_read(uint64_t addr, uint64_t size, uint8_t *data);
     vp::IoReqStatus handle_atomic(uint64_t addr, uint64_t size, uint8_t *in_data,
         uint8_t *out_data, vp::IoReqOpcode opcode, void *initiator);
@@ -373,7 +376,7 @@ vp::IoReqStatus Memory::req(vp::Block *__this, vp::IoReq *req)
     }
     else if (req->get_opcode() == vp::IoReqOpcode::WRITE)
     {
-        return _this->handle_write(offset, size, data);
+        return _this->handle_write(offset, size, data, req->get_strb());
     }
     else
     {
@@ -509,7 +512,8 @@ void Memory::memcheck_handle_req(vp::IoReq *req, uint64_t offset, uint64_t size)
 #endif
 
 
-vp::IoReqStatus Memory::handle_write(uint64_t offset, uint64_t size, uint8_t *data)
+vp::IoReqStatus Memory::handle_write(uint64_t offset, uint64_t size, uint8_t *data,
+    uint8_t *strb)
 {
     if (!this->powered_up)
     {
@@ -518,7 +522,23 @@ vp::IoReqStatus Memory::handle_write(uint64_t offset, uint64_t size, uint8_t *da
 
     if (data)
     {
-        memcpy((void *)&this->mem_data[offset], (void *)data, size);
+        if (strb)
+        {
+            // Partial write: commit only the bytes the initiator enabled.
+            // Used by masked vector stores, where the inactive elements of a
+            // request must leave memory untouched.
+            for (uint64_t i = 0; i < size; i++)
+            {
+                if (strb[i])
+                {
+                    this->mem_data[offset + i] = data[i];
+                }
+            }
+        }
+        else
+        {
+            memcpy((void *)&this->mem_data[offset], (void *)data, size);
+        }
     }
 
     return vp::IO_REQ_DONE;

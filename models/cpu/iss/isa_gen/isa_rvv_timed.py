@@ -18,6 +18,17 @@
 from cpu.iss.isa_gen.isa_gen import *
 from cpu.iss.isa_gen.isa_riscv_gen import *
 
+class VmBit(UnsignedImm):
+    """The RVV mask-enable bit (vm, encoding bit 25), decoded into uim[0].
+
+    Behaves exactly like the plain immediate it replaces; the dedicated
+    class lets ISA extensions recognise the field by type instead of
+    sniffing its bit range (see ara_v2.extend_isa, which declares the
+    implicit v0 mask read to the vector scoreboard from it)."""
+    def __init__(self):
+        super().__init__(0, Range(25, 1))
+
+
 #
 # RV32V
 #
@@ -41,7 +52,7 @@ Format_OPV_1 = [
 
 Format_OPV_2 = [ OutVRegF     (0, Range(7 , 5)),
                 InFReg     (0, Range(15, 5), f='sew'),
-                UnsignedImm(0, Range(25, 1)),
+                VmBit(),
 ]
 
 Format_OPV_3 = [
@@ -49,7 +60,7 @@ Format_OPV_3 = [
     InVRegF      (0, Range(15, 5)),
     InVRegF      (1, Range(7, 5)),
     InVRegF      (2, Range(20, 5)),
-    UnsignedImm  (0, Range(25, 1)),
+    VmBit(),
 ]
 
 Format_OPV_4 = [
@@ -57,7 +68,7 @@ Format_OPV_4 = [
     InFReg       (0, Range(15, 5), f='sew'),
     InVRegF      (1, Range(7, 5)),
     InVRegF      (2, Range(20, 5)),
-    UnsignedImm  (0, Range(25, 1)),
+    VmBit(),
 ]
 
 Format_OPV_5 = [
@@ -65,7 +76,7 @@ Format_OPV_5 = [
     InVRegF      (0, Range(15, 5)),
     InVRegF      (1, Range(20, 5)),
     InVRegF      (2, Range(7, 5)),
-    UnsignedImm  (0, Range(25, 1)),
+    VmBit(),
 ]
 
 Format_OPV_6 = [
@@ -73,28 +84,28 @@ Format_OPV_6 = [
     InFReg       (0, Range(15, 5), f='sew'),
     InVRegF      (1, Range(20, 5)),
     InVRegF      (2, Range(7, 5)),
-    UnsignedImm  (0, Range(25, 1)),
+    VmBit(),
 ]
 
 Format_OPV_7 = [
     OutVRegF     (0, Range(7 , 5)),
     InVRegF      (1, Range(20, 5)),
     InVRegF      (0, Range(15, 5)),
-    UnsignedImm  (0, Range(25, 1)),
+    VmBit(),
 ]
 
 Format_OPV_8 = [
     OutVRegF     (0, Range(7 , 5)),
     InVRegF      (1, Range(20, 5)),
     InFReg       (0, Range(15, 5), f='sew'),
-    UnsignedImm  (0, Range(25, 1)),
+    VmBit(),
 ]
 
 V_XXUU = [
     OutVReg      (0, Range(7 , 5)),
     InReg        (0, Range(15, 5)),
     InReg        (1, Range(20, 5)),
-    UnsignedImm  (0, Range(25, 1)),
+    VmBit(),
     UnsignedImm  (1, Range(12, 3)),
 ]
 
@@ -102,7 +113,7 @@ V_VXUU = [
     OutVReg      (0, Range(7 , 5)),
     InReg        (0, Range(15, 5)),
     InVReg       (1, Range(20 , 5)),
-    UnsignedImm  (0, Range(25, 1)),
+    VmBit(),
     UnsignedImm  (1, Range(12, 3)),
 ]
 
@@ -110,7 +121,7 @@ M_VXXUU = [
     InVReg     (1, Range(7 , 5)),
     InReg      (0, Range(15, 5)),
     InReg      (2, Range(20, 5)),
-    UnsignedImm(0, Range(25, 1)),
+    VmBit(),
     UnsignedImm(1, Range(12, 3)),
 ]
 
@@ -118,7 +129,7 @@ M_VVXUU = [
     InVReg     (1, Range(7 , 5)),
     InReg      (0, Range(15, 5)),
     InVReg     (2, Range(20, 5)),
-    UnsignedImm(0, Range(25, 1)),
+    VmBit(),
     UnsignedImm(1, Range(12, 3)),
 ]
 
@@ -126,85 +137,73 @@ V_VXU = [
     OutVReg      (0, Range(7 , 5)),
     InVReg       (1, Range(20, 5)),
     InReg        (0, Range(15, 5)),
-    UnsignedImm  (0, Range(25, 1)),
+    VmBit(),
 ]
 
 V_VIU = [
     OutVReg      (0, Range(7 , 5)),
     InVReg       (1, Range(20, 5)),
     SignedImm    (0, Range(15, 5)),
-    UnsignedImm  (0, Range(25, 1)),
+    VmBit(),
 ]
 
 VF_VFFU = [
     OutVRegF     (0, Range(7 , 5)),
     InVRegF      (1, Range(20, 5)),
     InFReg       (0, Range(15, 5), f='sew'),
-    UnsignedImm  (0, Range(25, 1)),
+    VmBit(),
 ]
 
 V_VUU = [
     OutVReg     (0, Range(7 , 5)),
     InVReg      (0, Range(20, 5)),
     UnsignedImm (1, Range(15, 5)),
-    UnsignedImm (0, Range(25, 1)),
+    VmBit(),
 ]
 
 V_VVU = [
     OutVReg     (0, Range(7 , 5)),
     InVReg      (1, Range(20, 5)),
     InVReg      (0, Range(15, 5)),
-    UnsignedImm (0, Range(25, 1)),
+    VmBit(),
 ]
 
 V_VU = [
     OutVReg     (0, Range(7 , 5)),
     InVReg      (0, Range(20, 5)),
-    UnsignedImm (0, Range(25, 1)),
+    VmBit(),
 ]
 
 Format_OPV_9 = [
     OutVRegF     (0, Range(7 , 5)),
     InVReg       (0, Range(20, 5)),
-    UnsignedImm  (0, Range(25, 1)),
+    VmBit(),
 ]
 
 Format_OPV_10 = [
     OutVReg      (0, Range(7 , 5)),
     InVRegF      (0, Range(20, 5)),
-    UnsignedImm  (0, Range(25, 1)),
+    VmBit(),
 ]
 
 Format_OPV_11 = [
     OutVRegF     (0, Range(7 , 5)),
     InVRegF      (0, Range(20, 5)),
-    UnsignedImm  (0, Range(25, 1)),
-]
-
-Format_OPV_12 = [
-    OutVRegF     (0, Range(7 , 5)),
-    InVRegF      (1, Range(20, 5)),
-    InVRegF      (0, Range(15, 5)),
-]
-
-Format_OPV_13 = [
-    OutVRegF     (0, Range(7 , 5)),
-    InVRegF      (1, Range(20, 5)),
-    InFReg       (0, Range(15, 5), f='sew'),
+    VmBit(),
 ]
 
 Format_OPV = [ OutVReg     (0, Range(7 , 5)),
                InVReg      (0, Range(15, 5)),#rs1/vs1
                InVReg      (1, Range(20, 5)),#vs2
                #UnsignedImm(0, Range(25, 0)),
-               UnsignedImm(0, Range(25, 1)),
+               VmBit(),
 ]
 
 Format_OPVV_F = [ OutVRegF     (0, Range(7 , 5)),
                InVRegF      (0, Range(15, 5)),#rs1/vs1
                InVRegF      (1, Range(20, 5)),#vs2
                #UnsignedImm(0, Range(25, 0)),
-               UnsignedImm(0, Range(25, 1)),
+               VmBit(),
 ]
 
 Format_OPVV2_F = [ OutVRegF     (0, Range(7 , 5)),
@@ -212,24 +211,24 @@ Format_OPVV2_F = [ OutVRegF     (0, Range(7 , 5)),
                InVRegF      (0, Range(15, 5)),#rs1/vs1
                InVRegF      (1, Range(20, 5)),#vs2
                #UnsignedImm(0, Range(25, 0)),
-               UnsignedImm(0, Range(25, 1)),
+               VmBit(),
 ]
 
 Format_OPV1 = [ OutVReg     (0, Range(7 , 5)),
                InVReg      (0, Range(15, 5)),#rs1/vs1
                #UnsignedImm(0, Range(25, 0)),
-               UnsignedImm(0, Range(25, 1)),
+               VmBit(),
 ]
 
 Format_OPVI = [ OutVReg     (0, Range(7 , 5)),
                InReg      (0, Range(15, 5)),
-               UnsignedImm(0, Range(25, 1)),
+               VmBit(),
                UnsignedImm(1, Range(12, 3)),
 ]
 
 Format_OPVS = [ InVReg     (1, Range(7 , 5)),
                InReg      (0, Range(15, 5)),
-               UnsignedImm(0, Range(25, 1)),
+               VmBit(),
                UnsignedImm(1, Range(12, 3)),
 ]
 
@@ -237,31 +236,31 @@ Format_OPVF = [ OutVReg     (0, Range(7 , 5)),
                 InFReg     (0, Range(15, 5)),#rs1/vs1
                 InVReg      (1, Range(20, 5)),#vs2
                 #UnsignedImm(0, Range(25, 0)),
-                UnsignedImm(0, Range(25, 1)),
+                VmBit(),
 ]
 Format_OPVF_F = [ OutVRegF     (0, Range(7 , 5)),
                 InFReg     (0, Range(15, 5), f='sew'),#rs1/vs1
                 InVRegF      (1, Range(20, 5)),#vs2
                 #UnsignedImm(0, Range(25, 0)),
-                UnsignedImm(0, Range(25, 1)),
+                VmBit(),
 ]
 Format_OPVF2_F = [ OutVRegF     (0, Range(7 , 5)),
                 InFReg     (0, Range(15, 5), f='sew'),#rs1/vs1
                 InVRegF      (1, Range(20, 5)),#vs2
                 InVRegF      (2, Range(7, 5)),#vs2
                 #UnsignedImm(0, Range(25, 0)),
-                UnsignedImm(0, Range(25, 1)),
+                VmBit(),
 ]
 Format_OPVFF = [ OutFReg    (0, Range(7 , 5)),
                  InFReg     (0, Range(15, 5)),#rs1/vs1
                  InVReg      (1, Range(20, 5)),#vs2
                  #UnsignedImm(0, Range(25, 0)),
-                 UnsignedImm(0, Range(25, 1)),
+                 VmBit(),
 ]
 Format_OPIVI = [ OutVReg     (0, Range(7 , 5)),
                  InVReg      (1, Range(20, 5)),
                  SignedImm  (0, Range(15, 5)),
-                 UnsignedImm(0, Range(25, 1)),
+                 VmBit(),
 ]
 Format_OPVLS = [ OutVReg     (0, Range(7 , 5)),
                  InVReg      (0, Range(15, 5)),
@@ -357,6 +356,22 @@ class Rv32v(IsaSubset):
             Instr('vmv.v.x'       ,   Format_OPV  ,    '010111 - ----- ----- 100 ----- 1010111'),
             Instr('vmv.s.x'       ,   Format_OPV_0  ,    '010000 - 00000 ----- 110 ----- 1010111'),
             Instr('vmv.x.s'       ,   Format_OPV  ,    '010000 - ----- 00000 010 ----- 1010111'),
+
+            # Mask-register logical instructions. They are bitwise operations
+            # over the first vl BITS of the three registers, not element-wise
+            # ones, so they ignore sew/lmul entirely. The vm bit is hardwired
+            # to 1 (they are never themselves masked), which is why the
+            # patterns pin it instead of leaving it a wildcard. Operand order
+            # follows the assembly form `vmop.mm vd, vs2, vs1`, i.e. vs2 is
+            # the left-hand side of the non-commutative andnot/ornot.
+            Instr('vmandnot.mm'   ,   Format_OPV  ,    '011000 1 ----- ----- 010 ----- 1010111'),
+            Instr('vmand.mm'      ,   Format_OPV  ,    '011001 1 ----- ----- 010 ----- 1010111'),
+            Instr('vmor.mm'       ,   Format_OPV  ,    '011010 1 ----- ----- 010 ----- 1010111'),
+            Instr('vmxor.mm'      ,   Format_OPV  ,    '011011 1 ----- ----- 010 ----- 1010111'),
+            Instr('vmornot.mm'    ,   Format_OPV  ,    '011100 1 ----- ----- 010 ----- 1010111'),
+            Instr('vmnand.mm'     ,   Format_OPV  ,    '011101 1 ----- ----- 010 ----- 1010111'),
+            Instr('vmnor.mm'      ,   Format_OPV  ,    '011110 1 ----- ----- 010 ----- 1010111'),
+            Instr('vmxnor.mm'     ,   Format_OPV  ,    '011111 1 ----- ----- 010 ----- 1010111'),
 
             Instr('vwadd.vv'      ,   Format_OPV  ,    '110001 - ----- ----- 010 ----- 1010111'),
             Instr('vwadd.vx'      ,   Format_OPV  ,    '110001 - ----- ----- 110 ----- 1010111'),
@@ -530,14 +545,14 @@ class Rv32v(IsaSubset):
             Instr('vfwnmsac.vv'      ,   Format_OPV_5  ,    '111111 - ----- ----- 001 ----- 1010111', tags=['fp_op']),
             Instr('vfwnmsac.vf'      ,   Format_OPV_6 ,    '111111 - ----- ----- 101 ----- 1010111', tags=['fp_op']),
 
-            Instr('vfsgnj.vv'        ,   Format_OPV_12  ,    '001000 - ----- ----- 001 ----- 1010111', tags=['fp_op']),
-            Instr('vfsgnj.vf'        ,   Format_OPV_13 ,    '001000 - ----- ----- 101 ----- 1010111', tags=['fp_op']),
+            Instr('vfsgnj.vv'        ,   Format_OPV_7  ,    '001000 - ----- ----- 001 ----- 1010111', tags=['fp_op']),
+            Instr('vfsgnj.vf'        ,   Format_OPV_8 ,    '001000 - ----- ----- 101 ----- 1010111', tags=['fp_op']),
 
-            Instr('vfsgnjn.vv'       ,   Format_OPV_12  ,    '001001 - ----- ----- 001 ----- 1010111', tags=['fp_op']),
-            Instr('vfsgnjn.vf'       ,   Format_OPV_13 ,    '001001 - ----- ----- 101 ----- 1010111', tags=['fp_op']),
+            Instr('vfsgnjn.vv'       ,   Format_OPV_7  ,    '001001 - ----- ----- 001 ----- 1010111', tags=['fp_op']),
+            Instr('vfsgnjn.vf'       ,   Format_OPV_8 ,    '001001 - ----- ----- 101 ----- 1010111', tags=['fp_op']),
 
-            Instr('vfsgnjx.vv'       ,   Format_OPV_12  ,    '001010 - ----- ----- 001 ----- 1010111', tags=['fp_op']),
-            Instr('vfsgnjx.vf'       ,   Format_OPV_13 ,    '001010 - ----- ----- 101 ----- 1010111', tags=['fp_op']),
+            Instr('vfsgnjx.vv'       ,   Format_OPV_7  ,    '001010 - ----- ----- 001 ----- 1010111', tags=['fp_op']),
+            Instr('vfsgnjx.vf'       ,   Format_OPV_8 ,    '001010 - ----- ----- 101 ----- 1010111', tags=['fp_op']),
 
             Instr('vfcvt.xu.f.v'     ,   Format_OPV_10  ,    '010010 - ----- 00000 001 ----- 1010111', tags=['fp_op', 'nseq']),
             Instr('vfcvt.x.f.v'      ,   Format_OPV_10  ,    '010010 - ----- 00001 001 ----- 1010111', tags=['fp_op', 'nseq']),

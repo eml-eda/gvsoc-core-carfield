@@ -421,11 +421,11 @@ bool LsuV2::data_req(iss_insn_t *insn, iss_addr_t addr, int size,
     this->memcheck_check_access(addr, size, opcode);
 #endif
 
-    // RI5CY-style misalignment check: only word-boundary crosses split.
-    // A halfword that fits entirely inside one 4-byte word goes through
-    // the fast path even if `addr & 1 != 0`.
-    iss_addr_t addr_first = addr & ~iss_addr_t(0x3);
-    iss_addr_t addr_last  = (addr + size - 1) & ~iss_addr_t(0x3);
+    // RI5CY-style misalignment check: only data-port-boundary crosses
+    // split. A halfword that fits entirely inside one port word goes
+    // through the fast path even if `addr & 1 != 0`.
+    iss_addr_t addr_first = addr & ~iss_addr_t(LSU_PORT_MASK);
+    iss_addr_t addr_last  = (addr + size - 1) & ~iss_addr_t(LSU_PORT_MASK);
     if (addr_first != addr_last)
     {
         return this->data_req_misaligned(insn, addr, size, opcode, is_signed,
@@ -439,8 +439,8 @@ bool LsuV2::data_req_misaligned(iss_insn_t *insn, iss_addr_t addr, int size,
                                 int reg, int reg2)
 {
     // Split into two aligned beats:
-    //   beat 0: [addr, next-word-boundary)         — size0 bytes
-    //   beat 1: [next-word-boundary, addr + size)  — size1 bytes
+    //   beat 0: [addr, next-port-boundary)         — size0 bytes
+    //   beat 1: [next-port-boundary, addr + size)  — size1 bytes
     // The first beat reuses ``data_req_aligned`` so it pays exactly one
     // memory-latency unit. The response path (data_response / task_handle
     // / handle_req_response sync) sees ``entry->misaligned_size != 0``
@@ -448,7 +448,7 @@ bool LsuV2::data_req_misaligned(iss_insn_t *insn, iss_addr_t addr, int size,
     // — that re-arms the same entry for beat 1, going through
     // ``data.req()`` again so we pay memory latency twice. This matches
     // RI5CY's serial ``misaligned_st`` FSM.
-    iss_addr_t addr1 = (addr + size - 1) & ~iss_addr_t(0x3);
+    iss_addr_t addr1 = (addr + size - 1) & ~iss_addr_t(LSU_PORT_MASK);
     int        size0 = (int)(addr1 - addr);
     int        size1 = size - size0;
 

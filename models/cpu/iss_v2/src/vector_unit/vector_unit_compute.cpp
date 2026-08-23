@@ -134,8 +134,9 @@ void VuCompute::fsm_handler(vp::Block *__this, vp::ClockEvent *event)
             // Integer computational instructions go to the integer units,
             // which can be fewer than the FPU lanes
             int nb_units = insn->desc->is_ipu ? _this->vu.nb_ipus : _this->vu.nb_lanes;
-            int nb_elem_per_cycle = (nb_units * _this->vu.lane_width /
-                _this->vu.iss.vector.sewb) >> insn->desc->elem_rate_shift;
+            int nb_elem_per_cycle = ((nb_units * _this->vu.lane_width /
+                _this->vu.iss.vector.sewb) >> insn->desc->elem_rate_shift)
+                << insn->desc->elem_rate_boost;
 
             if (pending_insn->nb_bytes_done == 0)
             {

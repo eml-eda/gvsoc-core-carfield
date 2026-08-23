@@ -195,8 +195,15 @@ class LsuV2(IssModule):
       guarded with ``#ifdef CONFIG_GVSOC_ISS_LSU_V2`` so they work in
       both modes.
     """
-    def __init__(self, nb_outstanding: int=1, class_name: str='LsuV2'):
+    def __init__(self, nb_outstanding: int=1, width: int=4,
+                 class_name: str='LsuV2'):
         self.nb_outstanding = nb_outstanding
+        # Width in bytes of the data port. An access crossing a port-word
+        # boundary is split into two serialized beats, so this decides
+        # whether an 8-byte FP load is one memory access or two. 4 is the
+        # historical value (32-bit port); cores with a 64-bit scalar data
+        # path (snitch/spatz) pass 8.
+        self.width = width
         self.class_name = class_name
 
     @override
@@ -204,6 +211,7 @@ class LsuV2(IssModule):
         iss.isa.add_define('CONFIG_GVSOC_ISS_LSU', self.class_name)
         iss.isa.add_define('CONFIG_GVSOC_ISS_LSU_V2', '1')
         iss.isa.add_define('CONFIG_GVSOC_ISS_LSU_NB_OUTSTANDING', self.nb_outstanding)
+        iss.isa.add_define('CONFIG_GVSOC_ISS_LSU_WIDTH', self.width)
         iss.isa.add_include('<cpu/iss_v2/include/lsu_v2.hpp>')
         iss.add_sources(['cpu/iss_v2/src/lsu_v2.cpp'])
         iss.isa.add_implem_include('<cpu/iss_v2/include/lsu_v2_implem.hpp>')

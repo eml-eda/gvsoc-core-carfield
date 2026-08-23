@@ -32,6 +32,16 @@
 #include <cpu/iss_v2/include/types.hpp>
 #include <cpu/iss_v2/include/task.hpp>
 
+// CONFIG_GVSOC_ISS_LSU_WIDTH is the width in bytes of the LSU's data port,
+// always emitted by the LsuV2 generator module (riscv.py, `width` parameter,
+// default 4 = the historical 32-bit port). An access that stays inside one
+// port word is a single memory request; one that crosses a port boundary is
+// split into two serialized beats (`data_req_misaligned`), each paying the
+// memory latency, since beat 1 is only issued once beat 0's response is
+// back. A core with a wider data port sets the width accordingly, so an
+// aligned access of that size stays a single request.
+#define LSU_PORT_MASK (CONFIG_GVSOC_ISS_LSU_WIDTH - 1)
+
 struct LsuReqEntry
 {
     // First must be first field of this structure to ease casting between
