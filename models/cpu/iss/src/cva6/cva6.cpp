@@ -131,6 +131,11 @@ void IssWrapper::fsm_handler(vp::Block *__this, vp::ClockEvent *event)
 {
     IssWrapper *_this = (IssWrapper *)__this;
 
+    if (_this->iss.exec.insn_on_hold)
+    {
+        return;
+    }
+
     if (_this->nb_pending_insn == 0)
     {
         _this->fsm_event.disable();
@@ -146,18 +151,20 @@ void IssWrapper::fsm_handler(vp::Block *__this, vp::ClockEvent *event)
         _this->iss.exec.trace.msg(vp::Trace::LEVEL_TRACE, "Commit instruction (pc: 0x%lx)\n", pending_insn.pc);
 
         iss_insn_t *insn = pending_insn.insn;
-        _this->insn_first++;
-        if (_this->insn_first == _this->max_pending_insn)
-        {
-            _this->insn_first = 0;
-        }
-        _this->nb_pending_insn--;
+        iss_addr_t next_pc;
 
         // Only execute the handler if we haven't offloaded the instruction to ara since it will
         // take care of executing the handler
         if ((insn->flags & ISS_INSN_FLAGS_VECTOR) == 0)
         {
-            iss_addr_t next_pc = insn->stub_handler(&_this->iss, insn, pending_insn.pc);
+            next_pc = insn->stub_handler(&_this->iss, insn, pending_insn.pc);
+
+            // The instruction has been put on hold. Keep it at the head of the
+            // queue so that it is retried once the hold condition clears.
+            if (_this->iss.exec.insn_on_hold)
+            {
+                return;
+            }
 
             for (int i=0; i<insn->nb_out_reg; i++)
             {
@@ -171,11 +178,20 @@ void IssWrapper::fsm_handler(vp::Block *__this, vp::ClockEvent *event)
                 }
             }
 
-            if (_this->do_flush && _this->nb_pending_insn == 0)
-            {
-                _this->do_flush = false;
-                _this->iss.exec.current_insn = next_pc;
-            }
+        }
+
+        _this->insn_first++;
+        if (_this->insn_first == _this->max_pending_insn)
+        {
+            _this->insn_first = 0;
+        }
+        _this->nb_pending_insn--;
+
+        if ((insn->flags & ISS_INSN_FLAGS_VECTOR) == 0 &&
+            _this->do_flush && _this->nb_pending_insn == 0)
+        {
+            _this->do_flush = false;
+            _this->iss.exec.current_insn = next_pc;
         }
     }
 }
