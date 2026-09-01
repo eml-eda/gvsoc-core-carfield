@@ -37,7 +37,7 @@
  * bffc mtime hi
  */
 
-#define RESOLUTION 100000
+#define RESOLUTION 1000000
 
 #define MSIP_BASE 0x0
 #define MTIMECMP_BASE 0x4000

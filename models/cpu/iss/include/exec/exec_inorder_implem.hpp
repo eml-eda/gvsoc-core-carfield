@@ -101,7 +101,7 @@ inline iss_insn_callback_t Exec::insn_stalled_fast_callback_get()
 
 inline void Exec::insn_stall()
 {
-    this->stall_insn = this->current_insn;
+    this->stall_insn = this->commit_insn_valid ? this->commit_insn : this->current_insn;
     this->iss.timing.insn_stall_start();
     this->stalled_inc();
 }
@@ -109,7 +109,7 @@ inline void Exec::insn_stall()
 inline void Exec::insn_hold(vp::ClockEventMeth *meth)
 {
     this->iss.trace.dump_trace_enabled = false;
-    this->stall_insn = this->current_insn;
+    this->stall_insn = this->commit_insn_valid ? this->commit_insn : this->current_insn;
     // Flag that we cannto execute instructions so that no one tries
     // to change the event callback
     this->insn_on_hold = true;

@@ -102,6 +102,7 @@ void Exec::reset(bool active)
         this->insn_table_index = 0;
         this->irq_locked = 0;
         this->insn_on_hold = false;
+        this->commit_insn_valid = false;
         this->stall_cycles = 0;
         this->wfi_start = 0;
         this->cache_sync = false;

@@ -245,7 +245,9 @@ bool Mmu::handle_pte()
         this->iss.trace.dump_trace_enabled = true;
         this->iss.exec.irq_locked--;
         this->iss.exec.insn_resume();
+#ifndef CONFIG_GVSOC_ISS_CVA6
         this->iss.exec.current_insn = this->stall_insn;
+#endif
 
         return false;
     }
@@ -314,7 +316,8 @@ void Mmu::walk_pgtab(iss_addr_t virt_addr)
     // Remember now the current instruction, in case walking the page-table is stalling the core
     // so that we can re-execute the instruction once the translatio is done.
     // This is needed for example, when a load instruction is triggering a miss.
-    this->stall_insn = this->iss.exec.current_insn;
+    this->stall_insn = this->iss.exec.commit_insn_valid ?
+        this->iss.exec.commit_insn : this->iss.exec.current_insn;
 
     this->current_virt_addr = virt_addr;
     this->current_level = this->nb_levels - 1;

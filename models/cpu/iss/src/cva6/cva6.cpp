@@ -136,6 +136,19 @@ void IssWrapper::fsm_handler(vp::Block *__this, vp::ClockEvent *event)
         return;
     }
 
+    // A fault raised while committing a held instruction transfers control
+    // to the trap handler. Do not re-commit the faulting instruction while
+    // the exception is pending; that would re-enter the MMU in S-mode and
+    // recursively raise the same page fault before the handler runs.
+    if (_this->iss.exec.has_exception)
+    {
+        _this->nb_pending_insn = 0;
+        _this->insn_first = _this->insn_last;
+        _this->do_flush = false;
+        _this->fsm_event.disable();
+        return;
+    }
+
     if (_this->nb_pending_insn == 0)
     {
         _this->fsm_event.disable();
@@ -157,7 +170,10 @@ void IssWrapper::fsm_handler(vp::Block *__this, vp::ClockEvent *event)
         // take care of executing the handler
         if ((insn->flags & ISS_INSN_FLAGS_VECTOR) == 0)
         {
+            _this->iss.exec.commit_insn = pending_insn.pc;
+            _this->iss.exec.commit_insn_valid = true;
             next_pc = insn->stub_handler(&_this->iss, insn, pending_insn.pc);
+            _this->iss.exec.commit_insn_valid = false;
 
             // The instruction has been put on hold. Keep it at the head of the
             // queue so that it is retried once the hold condition clears.

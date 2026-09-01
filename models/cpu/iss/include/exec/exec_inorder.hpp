@@ -92,6 +92,11 @@ public:
     inline bool handle_stall_cycles();
 
     iss_reg_t current_insn;
+    // During CVA6 commit, current_insn can already point at a younger
+    // prefetched instruction. Keep the instruction being committed
+    // separately so asynchronous stalls can resume the right instruction.
+    iss_reg_t commit_insn = 0;
+    bool commit_insn_valid = false;
     vp::ClockEvent instr_event;
     vp::reg_64 stalled;
 
